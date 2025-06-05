@@ -1,10 +1,10 @@
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from scholarqa.config.config_setup import LogsConfig
 from scholarqa.llms.constants import CostAwareLLMResult
 from scholarqa.models import ToolRequest
-from scholarqa.trace.trace_writer import GCSWriter, LocalWriter
+from scholarqa.trace.trace_writer import LocalWriter
 
 
 class EventTrace:
@@ -49,8 +49,7 @@ class EventTrace:
         self.candidates = candidates
 
     def trace_quote_event(self, paper_summaries: CostAwareLLMResult):
-        topk = [{"idx": i, "key": k, "snippets": v} for
-                i, (k, v) in enumerate(paper_summaries.result.items())]
+        topk = [{"idx": i, "key": k, "snippets": v} for i, (k, v) in enumerate(paper_summaries.result.items())]
         topk_models = paper_summaries.models
         for idx, tk in enumerate(topk):
             tk["model"] = topk_models[idx]
@@ -66,7 +65,9 @@ class EventTrace:
         self.cluster["model"] = cluster_json.models[0]
         self.total_cost += cluster_json.tot_cost
 
-    def trace_inline_citation_following_event(self, paper_summaries_extd: Dict[str, Any], quotes_metadata: Dict[str, List[Dict[str, Any]]]):
+    def trace_inline_citation_following_event(
+        self, paper_summaries_extd: Dict[str, Any], quotes_metadata: Dict[str, List[Dict[str, Any]]]
+    ):
         for quote_obj in self.quotes["quotes"]:
             quote_obj["snippets"] = paper_summaries_extd[quote_obj["key"]].get("quote", quote_obj["snippets"])
             quote_obj["inline_citations"] = paper_summaries_extd[quote_obj["key"]].get("inline_citations", dict())
@@ -79,6 +80,5 @@ class EventTrace:
         self.total_cost += cost_result.tot_cost
 
     def persist_trace(self, logs_config: LogsConfig):
-        trace_writer = GCSWriter(bucket_name=logs_config.event_trace_loc) if logs_config.tracing_mode == "gcs" \
-            else LocalWriter(local_dir=f"{logs_config.log_dir}/{logs_config.event_trace_loc}")
+        trace_writer = LocalWriter(local_dir=f"{logs_config.log_dir}/{logs_config.event_trace_loc}")
         trace_writer.write(trace_json=self, file_name=self.task_id)

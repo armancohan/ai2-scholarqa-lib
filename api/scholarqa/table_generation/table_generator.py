@@ -9,7 +9,7 @@ from scholarqa.table_generation.column_suggestion import generate_attribute_sugg
 from scholarqa.table_generation.value_generation import generate_value_suggestions
 from scholarqa.utils import get_paper_metadata
 from scholarqa.rag.retrieval import PaperFinder
-from scholarqa.llms.constants import GPT_4o
+from scholarqa.llms.constants import GPT_41
 from scholarqa.llms.litellm_helper import CostAwareLLMCaller, CostReportingArgs
 
 class TableGenerator:
@@ -31,8 +31,8 @@ class TableGenerator:
         original_query: str, 
         section_title: str, 
         corpus_ids: List[int],
-        column_model: Optional[str] = GPT_4o,
-        value_model: Optional[str] = GPT_4o,
+        column_model: Optional[str] = GPT_41,
+        value_model: Optional[str] = GPT_41,
     ) -> TableWidget:
         """
         Entry point to generate a complete table, given the original

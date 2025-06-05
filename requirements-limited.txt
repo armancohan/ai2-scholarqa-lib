@@ -1,0 +1,11 @@
+# Core dependencies for ScholarQA minimal functionality
+pandas>=2.0.0  # For data manipulation and DataFrame operations
+requests>=2.31.0  # For API calls to Semantic Scholar
+anyascii>=0.1.5  # For text normalization
+pydantic>=2.0.0  # For data validation and settings management
+litellm>=1.0.0  # For LLM interactions
+langsmith>=0.0.69  # For tracing (required by @traceable decorator)
+
+# Optional but recommended for better performance
+numpy>=1.24.0  # Required by pandas
+python-dotenv>=1.0.0  # For environment variable management 

@@ -5,7 +5,7 @@ httpx
 pydantic==2.*
 python-json-logger==2.0.4
 uvicorn[standard]
-nora_lib==1.0.0
+# nora_lib==1.0.0
 modal
 pandas
 jsonlines
@@ -18,7 +18,7 @@ requests
 bs4
 fuzzy-match
 googlesearch-python
-openai==1.69.0
+openai
 tqdm
 google-cloud-storage==2.18.2
 filelock==3.16.1

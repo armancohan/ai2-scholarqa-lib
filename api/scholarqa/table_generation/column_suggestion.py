@@ -6,7 +6,7 @@ from typing import List, Dict
 from scholarqa.table_generation.prompts import ATTRIBUTE_PROMPT, SYSTEM_PROMPT
 from scholarqa.utils import get_paper_metadata
 from scholarqa.llms.litellm_helper import CostAwareLLMCaller, CostReportingArgs, llm_completion
-from scholarqa.llms.constants import GPT_4o
+from scholarqa.llms.constants import GPT_41
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def generate_final_prompt(query: str, formatted_paper_info: str) -> str:
 
 def generate_attribute_suggestions(
         corpus_ids: List[str], 
-        model: str = GPT_4o, 
+        model: str = GPT_41, 
         query: str = None,
         llm_caller: CostAwareLLMCaller = None,
         cost_args: CostReportingArgs = None,

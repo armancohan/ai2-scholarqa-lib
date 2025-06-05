@@ -3,13 +3,9 @@ import os
 import sys
 from collections import namedtuple
 from logging import Formatter
-from typing import Any, Dict, Optional, Set, List
+from typing import Any, Dict, List, Optional, Set
 
 import requests
-from fastapi import HTTPException
-from google.cloud import storage
-
-from scholarqa import glog
 from scholarqa.llms.litellm_helper import setup_llm_cache
 
 logger = logging.getLogger(__name__)
@@ -17,11 +13,20 @@ logger = logging.getLogger(__name__)
 S2_APIKEY = os.getenv("S2_API_KEY", "")
 S2_HEADERS = {"x-api-key": S2_APIKEY}
 S2_API_BASE_URL = "https://api.semanticscholar.org/graph/v1/"
-CompletionResult = namedtuple("CompletionCost",
-                              ["content", "model", "cost", "input_tokens", "output_tokens", "total_tokens"])
+CompletionResult = namedtuple("CompletionCost", ["content", "model", "cost", "input_tokens", "output_tokens", "total_tokens"])
 NUMERIC_META_FIELDS = {"year", "citationCount", "referenceCount", "influentialCitationCount"}
 CATEGORICAL_META_FIELDS = {"title", "abstract", "corpusId", "authors", "venue", "isOpenAccess", "openAccessPdf"}
 METADATA_FIELDS = ",".join(CATEGORICAL_META_FIELDS.union(NUMERIC_META_FIELDS))
+
+
+# Custom exception for API errors
+class APIError(Exception):
+    """Custom exception for API errors with status code."""
+
+    def __init__(self, message: str, status_code: int = 500):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
 
 
 class TaskIdAwareLogFormatter(Formatter):
@@ -35,15 +40,10 @@ class TaskIdAwareLogFormatter(Formatter):
         return f"{og_message} - {task_id_part}- {record.getMessage()}"
 
 
-def init_settings(logs_dir: str, log_level: str = "INFO",
-                  litellm_cache_dir: str = "litellm_cache") -> TaskIdAwareLogFormatter:
+def init_settings(logs_dir: str, log_level: str = "INFO", litellm_cache_dir: str = "litellm_cache") -> TaskIdAwareLogFormatter:
     def setup_logging() -> TaskIdAwareLogFormatter:
         # If LOG_FORMAT is "google:json" emit log message as JSON in a format Google Cloud can parse
-        loggers = [
-            "LiteLLM Proxy",
-            "LiteLLM Router",
-            "LiteLLM"
-        ]
+        loggers = ["LiteLLM Proxy", "LiteLLM Router", "LiteLLM"]
 
         for logger_name in loggers:
             litellm_logger = logging.getLogger(logger_name)
@@ -100,20 +100,18 @@ def get_ref_author_str(authors: List[Dict[str, str]]) -> str:
 
 
 def query_s2_api(
-        end_pt: str = "paper/batch",
-        params: Dict[str, Any] = None,
-        payload: Dict[str, Any] = None,
-        method="get",
-):
+    end_pt: str = "paper/batch",
+    params: Dict[str, Any] = None,
+    payload: Dict[str, Any] = None,
+    method: str = "get",
+) -> Dict[str, Any]:
+    """Query the Semantic Scholar API with error handling."""
     url = S2_API_BASE_URL + end_pt
     req_method = requests.get if method == "get" else requests.post
     response = req_method(url, headers=S2_HEADERS, params=params, json=payload)
     if response.status_code != 200:
-        logging.exception(f"S2 API request to end point {end_pt} failed with status code {response.status_code}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"S2 API request failed with status code {response.status_code}",
-        )
+        logging.exception(f"S2 API request to end point {end_pt} failed with status code " f"{response.status_code}")
+        raise APIError(f"S2 API request failed with status code {response.status_code}", status_code=500)
     return response.json()
 
 
@@ -122,25 +120,21 @@ def get_paper_metadata(corpus_ids: Set[str], fields=METADATA_FIELDS) -> Dict[str
         return {}
     paper_data = query_s2_api(
         end_pt="paper/batch",
-        params={
-            "fields": fields
-        },
+        params={"fields": fields},
         payload={"ids": ["CorpusId:{0}".format(cid) for cid in corpus_ids]},
         method="post",
     )
     paper_metadata = {
         str(pdata["corpusId"]): {k: make_int(v) if k in NUMERIC_META_FIELDS else pdata.get(k) for k, v in pdata.items()}
-        for pdata in paper_data if pdata and "corpusId" in pdata
+        for pdata in paper_data
+        if pdata and "corpusId" in pdata
     }
     return paper_metadata
 
 
-def push_to_gcs(text: str, bucket: str, file_path: str):
+def init_task(self, task_id: str, tool_request: Any):
     try:
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(bucket)
-        blob = bucket.blob(file_path)
-        blob.upload_from_string(text)
-        logging.info(f"Pushed event trace: {file_path} to GCS")
-    except Exception as e:
-        logging.info(f"Error pushing {file_path} to GCS: {e}")
+        tool_request.user_id = str(uuid5(namespace=UUID(tool_request.user_id), name=f"nora-{UUID_NAMESPACE}"))
+    except (ValueError, TypeError) as e:
+        logging.warning(f"Failed to generate UUID for user_id: {e}")
+        pass

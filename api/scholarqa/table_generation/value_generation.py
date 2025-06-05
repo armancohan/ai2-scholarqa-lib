@@ -61,7 +61,7 @@ def get_metadata_columns(
         "user_prompt": prompt,
         "system_prompt": SYSTEM_PROMPT,
         "model": model,
-        "fallback": GPT_4o,
+        "fallback": GPT_41,
     }
     output = llm_caller.call_method(
         cost_args=cur_cost_args,
@@ -119,7 +119,7 @@ def get_value_from_abstract(
         "user_prompt": prompt,
         "system_prompt": SYSTEM_PROMPT,
         "model": model,
-        "fallback": GPT_4o,
+        "fallback": GPT_41,
     }
     output = llm_caller.call_method(
         cost_args=cur_cost_args,
@@ -178,7 +178,7 @@ def run_paper_qa(
                 "user_prompt": prompt,
                 "system_prompt": SYSTEM_PROMPT,
                 "model": model,
-                "fallback": GPT_4o,
+                "fallback": GPT_41,
                 "response_format": PaperQAAnswer, 
             }
             output = llm_caller.call_method(

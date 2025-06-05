@@ -62,7 +62,7 @@ def setup_llm_cache(cache_type: str = "s3", **cache_args):
 
 
 @traceable(run_type="llm", name="batch completion")
-def batch_llm_completion(model: str, messages: List[str], system_prompt: str = None, fallback=GPT_4o,
+def batch_llm_completion(model: str, messages: List[str], system_prompt: str = None, fallback=GPT_41,
                          **llm_lite_params) -> List[
     CompletionResult]:
     """returns the result from the llm chat completion api with cost and tokens used"""
@@ -91,7 +91,7 @@ def batch_llm_completion(model: str, messages: List[str], system_prompt: str = N
 
 
 @traceable(run_type="llm", name="completion")
-def llm_completion(user_prompt: str, system_prompt: str = None, fallback=GPT_4o, **llm_lite_params) -> CompletionResult:
+def llm_completion(user_prompt: str, system_prompt: str = None, fallback=GPT_41, **llm_lite_params) -> CompletionResult:
     """returns the result from the llm chat completion api with cost and tokens used"""
     messages = []
     fallbacks = [

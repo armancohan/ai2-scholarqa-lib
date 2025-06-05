@@ -7,7 +7,7 @@ from typing import Tuple, Dict, List, Any, Generator
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from scholarqa.llms.constants import GPT_4o
+from scholarqa.llms.constants import GPT_41
 from scholarqa.llms.litellm_helper import batch_llm_completion, llm_completion
 from scholarqa.llms.prompts import USER_PROMPT_PAPER_LIST_FORMAT, USER_PROMPT_QUOTE_LIST_FORMAT, \
     PROMPT_ASSEMBLE_NO_QUOTES_SUMMARY
@@ -43,7 +43,7 @@ class ClusterPlan(BaseModel):
 
 
 class MultiStepQAPipeline:
-    def __init__(self, llm_model: str, fallback_llm: str = GPT_4o, batch_workers: int = 20,
+    def __init__(self, llm_model: str, fallback_llm: str = GPT_41, batch_workers: int = 20,
                  **llm_kwargs):
         self.llm_model = llm_model
         self.fallback_llm = fallback_llm

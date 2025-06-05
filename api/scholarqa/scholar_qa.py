@@ -3,28 +3,33 @@ import os
 import re
 from threading import Thread
 from time import time
-from typing import List, Any, Dict, Tuple, Generator
+from typing import Any, Dict, Generator, List, Tuple
 from uuid import uuid4
 
 import pandas as pd
 from anyascii import anyascii
 from langsmith import traceable
-
 from scholarqa.config.config_setup import LogsConfig
-from scholarqa.llms.constants import CostAwareLLMResult, GPT_4o
-from scholarqa.llms.litellm_helper import CLAUDE_37_SONNET, CostAwareLLMCaller, CostReportingArgs
-from scholarqa.llms.prompts import SYSTEM_PROMPT_QUOTE_PER_PAPER, SYSTEM_PROMPT_QUOTE_CLUSTER, PROMPT_ASSEMBLE_SUMMARY
-from scholarqa.models import GeneratedSection, TaskResult, ToolRequest, CitationSrc
+from scholarqa.llms.constants import GPT_41, CostAwareLLMResult
+from scholarqa.llms.litellm_helper import (CLAUDE_4_SONNET, CostAwareLLMCaller,
+                                           CostReportingArgs)
+from scholarqa.llms.prompts import (PROMPT_ASSEMBLE_SUMMARY,
+                                    SYSTEM_PROMPT_QUOTE_CLUSTER,
+                                    SYSTEM_PROMPT_QUOTE_PER_PAPER)
+from scholarqa.models import (CitationSrc, GeneratedSection, TaskResult,
+                              ToolRequest)
 from scholarqa.postprocess.json_output_utils import get_json_summary
-from scholarqa.preprocess.query_preprocessor import validate, decompose_query, LLMProcessedQuery
+from scholarqa.preprocess.query_preprocessor import (LLMProcessedQuery,
+                                                     decompose_query, validate)
 from scholarqa.rag.multi_step_qa_pipeline import MultiStepQAPipeline
 from scholarqa.rag.retrieval import PaperFinder
-from scholarqa.state_mgmt.local_state_mgr import AbsStateMgrClient, LocalStateMgrClient
-from scholarqa.trace.event_traces import EventTrace
-from scholarqa.utils import get_paper_metadata, NUMERIC_META_FIELDS, CATEGORICAL_META_FIELDS, get_ref_author_str, \
-    make_int
-from scholarqa.table_generation.table_model import TableWidget
+from scholarqa.state_mgmt.local_state_mgr import (AbsStateMgrClient,
+                                                  LocalStateMgrClient)
 from scholarqa.table_generation.table_generator import TableGenerator
+from scholarqa.table_generation.table_model import TableWidget
+from scholarqa.trace.event_traces import EventTrace
+from scholarqa.utils import (CATEGORICAL_META_FIELDS, NUMERIC_META_FIELDS,
+                             get_paper_metadata, get_ref_author_str, make_int)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +44,7 @@ class ScholarQA:
             # Required for webapp since a new process is created for each request, for library task_id can be None initially and assigned for each request as below
             paper_finder: PaperFinder,
             task_id: str = None,
-            llm_model: str = CLAUDE_37_SONNET,
+            llm_model: str = CLAUDE_4_SONNET,
             multi_step_pipeline: MultiStepQAPipeline = None,
             state_mgr: AbsStateMgrClient = None,
             logs_config: LogsConfig = None,
@@ -57,7 +62,7 @@ class ScholarQA:
         self.task_id = task_id
         self.paper_finder = paper_finder
         self.llm_model = llm_model
-        fallback_llm = kwargs.get("fallback_llm", GPT_4o)
+        fallback_llm = kwargs.get("fallback_llm", GPT_41)
         self.validate = kwargs.get("validate", "OPENAI_API_KEY" in os.environ)
         if not self.validate:
             logger.warning("Validation of the query for harmful content is turned off")
@@ -434,8 +439,8 @@ class ScholarQA:
             "query": query,
             "section_title": dim["name"],
             "cit_ids": cit_ids,
-            "column_model": GPT_4o,
-            "value_model": GPT_4o,
+            "column_model": GPT_41,
+            "value_model": GPT_41,
         }
         tthread = Thread(target=call_table_generator, args=(dim["idx"], payload,))
         tthread.start()
