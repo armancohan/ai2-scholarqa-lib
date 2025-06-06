@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import List, Any, Dict
 import logging
+from dotenv import load_dotenv
+from scholarqa.utils import query_s2_api, METADATA_FIELDS, make_int, NUMERIC_META_FIELDS, get_paper_metadata
 
-from scholarqa.utils import query_s2_api, METADATA_FIELDS, make_int, NUMERIC_META_FIELDS
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,16 @@ class AbstractRetriever(ABC):
 
     @abstractmethod
     def retrieve_additional_papers(self, query: str, **filter_kwargs) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def get_paper_citations(self, corpus_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get papers that cite the given paper."""
+        pass
+
+    @abstractmethod
+    def get_paper_references(self, corpus_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get papers that are referenced by the given paper."""
         pass
 
 
@@ -30,6 +42,22 @@ class FullTextRetriever(AbstractRetriever):
         snippets_list = [
             snippet for snippet in snippets_list if len(snippet["text"].split(" ")) > 20
         ]
+        # Use get_paper_metadata to fetch metadata for all collected corpus_ids
+        corpus_ids = [snippet["corpus_id"] for snippet in snippets_list]
+        if corpus_ids:
+            # get_paper_metadata expects a set of strings
+            meta_map = get_paper_metadata(set(str(cid) for cid in corpus_ids))
+            # Merge metadata into each snippet by corpus_id
+            for snippet in snippets_list:
+                meta = meta_map[str(snippet["corpus_id"])]
+                if "title" in meta:
+                    snippet["meta_title"] = meta["title"]
+                if "authors" in meta:
+                    snippet["meta_authors"] = meta["authors"]
+                if "year" in meta:
+                    snippet["meta_year"] = meta["year"]
+                if "abstract" in meta:
+                    snippet["meta_abstract"] = meta["abstract"]
         return snippets_list
 
     def snippet_search(self, query: str, **filter_kwargs) -> List[Dict[str, Any]]:
@@ -37,7 +65,6 @@ class FullTextRetriever(AbstractRetriever):
             return []
         query_params = {fkey: fval for fkey, fval in filter_kwargs.items() if fval}
         query_params.update({"query": query, "limit": self.n_retrieval})
-        print(query_params)
         snippets = query_s2_api(
             end_pt="snippet/search",
             params=query_params,
@@ -77,6 +104,7 @@ class FullTextRetriever(AbstractRetriever):
                 res_map["stype"] = "vespa"
                 if res_map:
                     snippets_list.append(res_map)
+        
         return snippets_list
 
     def retrieve_additional_papers(self, query: str, **filter_kwargs) -> List[Dict[str, Any]]:
@@ -112,3 +140,64 @@ class FullTextRetriever(AbstractRetriever):
                 pd["stype"] = "public_api"
                 pd["pdf_hash"] = ""
         return paper_data
+
+    def get_paper_citations(self, corpus_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get papers that cite the given paper using Semantic Scholar API."""
+        try:
+            extended_limit = limit * 2  # make sure we include highly influential citations
+            meta_data_fields = METADATA_FIELDS + ",isInfluential"
+            response = query_s2_api(
+                end_pt=f"paper/CorpusId:{corpus_id}/citations",
+                params={"limit": extended_limit, "fields": meta_data_fields},
+                method="get"
+            )
+            
+            citations = []
+            if "data" in response and response["data"]:
+                for citation_entry in response["data"]:
+                    if citation_entry.get("citingPaper"):
+                        paper = citation_entry["citingPaper"]
+                        if paper.get("corpusId") and paper.get("title"):
+                            # Normalize the paper data format
+                            normalized_paper = {k: make_int(v) if k in NUMERIC_META_FIELDS else paper.get(k) 
+                                              for k, v in paper.items()}
+                            normalized_paper["corpus_id"] = str(paper["corpusId"])
+                            citations.append(normalized_paper)
+            
+            logger.info(f"Retrieved {len(citations)} citations for paper {corpus_id}")
+            return citations
+        except Exception as e:
+            logger.error(f"Failed to get citations for paper {corpus_id}: {e}")
+            return []
+
+    def get_paper_references(self, corpus_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get papers that are referenced by the given paper using Semantic Scholar API."""
+        try:
+            meta_data_fields = METADATA_FIELDS + ",isInfluential"
+            extended_limit = limit * 2  # make sure we include highly influential citations
+            response = query_s2_api(
+                end_pt=f"paper/CorpusId:{corpus_id}/references",
+                params={"limit": extended_limit, "fields": meta_data_fields},
+                method="get"
+            )
+            
+            references = []
+            if "data" in response and response["data"]:
+                for reference_entry in response["data"]:
+                    if reference_entry.get("citedPaper"):
+                        paper = reference_entry["citedPaper"]
+                        if paper.get("corpusId") and paper.get("title"):
+                            # Normalize the paper data format
+                            normalized_paper = {k: make_int(v) if k in NUMERIC_META_FIELDS else paper.get(k) 
+                                              for k, v in paper.items()}
+                            normalized_paper["corpus_id"] = str(paper["corpusId"])
+                            references.append(normalized_paper)
+            # sort by isInfluential
+            references.sort(key=lambda x: x.get("isInfluential", 0), reverse=True)
+            references = references[:limit]
+            
+            logger.info(f"Retrieved {len(references)} references for paper {corpus_id}")
+            return references
+        except Exception as e:
+            logger.error(f"Failed to get references for paper {corpus_id}: {e}")
+            return []
