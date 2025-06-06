@@ -1,5 +1,6 @@
 import logging
 import os
+from dotenv import load_dotenv
 from scholarqa.llms.constants import *
 from typing import List, Any, Callable, Tuple, Iterator, Union, Generator
 
@@ -12,6 +13,9 @@ from scholarqa.state_mgmt.local_state_mgr import AbsStateMgrClient
 
 logger = logging.getLogger(__name__)
 
+litellm._turn_on_debug()
+# load the environment variables from the .env file
+load_dotenv()
 
 class CostAwareLLMCaller:
     def __init__(self, state_mgr: AbsStateMgrClient):
@@ -66,6 +70,7 @@ def batch_llm_completion(model: str, messages: List[str], system_prompt: str = N
                          **llm_lite_params) -> List[
     CompletionResult]:
     """returns the result from the llm chat completion api with cost and tokens used"""
+    print(f"batch llm call with model {model}")
     fallbacks = [
         fallback] if fallback else []  # Disable for now in lieu of https://github.com/BerriAI/litellm/issues/10517
     messages = [trim_messages([{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}], model)
