@@ -3,7 +3,7 @@ import os
 import sys
 from collections import namedtuple
 from logging import Formatter
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 import requests
 from scholarqa.llms.litellm_helper import setup_llm_cache
@@ -15,7 +15,7 @@ S2_HEADERS = {"x-api-key": S2_APIKEY}
 S2_API_BASE_URL = "https://api.semanticscholar.org/graph/v1/"
 CompletionResult = namedtuple("CompletionCost", ["content", "model", "cost", "input_tokens", "output_tokens", "total_tokens"])
 NUMERIC_META_FIELDS = {"year", "citationCount", "referenceCount", "influentialCitationCount"}
-CATEGORICAL_META_FIELDS = {"title", "abstract", "corpusId", "authors", "venue", "isOpenAccess", "openAccessPdf"}
+CATEGORICAL_META_FIELDS = {"title", "abstract", "corpusId", "authors", "venue", "isOpenAccess", "openAccessPdf", "fieldsOfStudy", "citationStyles", "venue"}
 METADATA_FIELDS = ",".join(CATEGORICAL_META_FIELDS.union(NUMERIC_META_FIELDS))
 
 
@@ -104,32 +104,55 @@ def query_s2_api(
     params: Dict[str, Any] = None,
     payload: Dict[str, Any] = None,
     method: str = "get",
-) -> Dict[str, Any]:
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """Query the Semantic Scholar API with error handling."""
     url = S2_API_BASE_URL + end_pt
     req_method = requests.get if method == "get" else requests.post
     response = req_method(url, headers=S2_HEADERS, params=params, json=payload)
     if response.status_code != 200:
-        logging.exception(f"S2 API request to end point {end_pt} failed with status code " f"{response.status_code}")
-        raise APIError(f"S2 API request failed with status code {response.status_code}", status_code=500)
+        import time
+        logging.warning(f"S2 API request to end point {end_pt} failed with status code {response.status_code}. Retrying in 5 seconds...")
+        time.sleep(10)
+        response = req_method(url, headers=S2_HEADERS, params=params, json=payload)
+        if response.status_code != 200:
+            try:
+                error_text = response.text
+            except Exception:
+                error_text = "<could not decode response text>"
+            logging.error(
+                f"S2 API request to end point {end_pt} failed again with status code {response.status_code}. "
+                f"Response content: {error_text}"
+            )
+            raise APIError(
+                f"S2 API request failed with status code {response.status_code}. Response content: {error_text}",
+                status_code=500
+            )
     return response.json()
 
 
-def get_paper_metadata(corpus_ids: Set[str], fields=METADATA_FIELDS) -> Dict[str, Any]:
+def get_paper_metadata(corpus_ids: Set[str], fields=METADATA_FIELDS, batch_size: int = 25) -> Dict[str, Any]:
+    """
+    Fetch paper metadata from S2 API in batches to avoid exceeding request limits.
+    """
     if not corpus_ids:
         return {}
-    paper_data = query_s2_api(
-        end_pt="paper/batch",
-        params={"fields": fields},
-        payload={"ids": ["CorpusId:{0}".format(cid) for cid in corpus_ids]},
-        method="post",
-    )
-    paper_metadata = {
-        str(pdata["corpusId"]): {k: make_int(v) if k in NUMERIC_META_FIELDS else pdata.get(k) for k, v in pdata.items()}
-        for pdata in paper_data
-        if pdata and "corpusId" in pdata
-    }
-    return paper_metadata
+    corpus_ids = list(corpus_ids)
+    all_paper_metadata = {}
+    for i in range(0, len(corpus_ids), batch_size):
+        batch_ids = corpus_ids[i:i + batch_size]
+        paper_data = query_s2_api(
+            end_pt="paper/batch",
+            params={"fields": fields},
+            payload={"ids": ["CorpusId:{0}".format(cid) for cid in batch_ids]},
+            method="post",
+        )
+        batch_metadata = {
+            str(pdata["corpusId"]): {k: make_int(v) if k in NUMERIC_META_FIELDS else pdata.get(k) for k, v in pdata.items()}
+            for pdata in paper_data
+            if pdata and "corpusId" in pdata
+        }
+        all_paper_metadata.update(batch_metadata)
+    return all_paper_metadata
 
 
 def init_task(self, task_id: str, tool_request: Any):

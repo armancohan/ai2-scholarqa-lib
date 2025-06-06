@@ -10,7 +10,7 @@ import pandas as pd
 from anyascii import anyascii
 from langsmith import traceable
 from scholarqa.config.config_setup import LogsConfig
-from scholarqa.llms.constants import GPT_41, CostAwareLLMResult
+from scholarqa.llms.constants import GPT_41, GPT_41_MINI, CostAwareLLMResult
 from scholarqa.llms.litellm_helper import (CLAUDE_4_SONNET, CostAwareLLMCaller,
                                            CostReportingArgs)
 from scholarqa.llms.prompts import (PROMPT_ASSEMBLE_SUMMARY,
@@ -30,6 +30,7 @@ from scholarqa.table_generation.table_model import TableWidget
 from scholarqa.trace.event_traces import EventTrace
 from scholarqa.utils import (CATEGORICAL_META_FIELDS, NUMERIC_META_FIELDS,
                              get_paper_metadata, get_ref_author_str, make_int)
+from scholarqa.rag.citation_config import CitationTraceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class ScholarQA:
             # Required for webapp since a new process is created for each request, for library task_id can be None initially and assigned for each request as below
             paper_finder: PaperFinder,
             task_id: str = None,
-            llm_model: str = CLAUDE_4_SONNET,
+            llm_model: str = GPT_41_MINI,
             multi_step_pipeline: MultiStepQAPipeline = None,
             state_mgr: AbsStateMgrClient = None,
             logs_config: LogsConfig = None,
@@ -146,8 +147,9 @@ class ScholarQA:
         return snippet_results, search_api_results
 
     @traceable(name="Retrieval: Rerank the passages and aggregate at paper level")
-    def rerank_and_aggregate(self, user_query: str, retrieved_candidates: List[Dict[str, Any]], filter_paper_metadata: [
-        Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    def rerank_and_aggregate(self, user_query: str, llm_processed_query: LLMProcessedQuery, 
+                             retrieved_candidates: List[Dict[str, Any]], 
+                             filter_paper_metadata: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         if self.paper_finder.n_rerank > 0:
             self.update_task_state(
                 f"Further re-rank and aggregate passages to focus on up to top {self.paper_finder.n_rerank} papers",
@@ -155,6 +157,21 @@ class ScholarQA:
         start = time()
         reranked_candidates = self.paper_finder.rerank(user_query, retrieved_candidates)
         logger.info("Reranking time: %.2f", time() - start)
+        config = CitationTraceConfig(
+            top_n_papers=5,
+            max_citations_per_paper=15,
+            max_references_per_paper=15,
+            max_traced_papers=20,
+            enable_second_round=True,
+            second_round_top_n=10,
+            second_round_cap=10,
+            year_range=llm_processed_query.result.search_filters.get("year") or "2022-2025"
+        )
+
+        reranked_candidates = self.paper_finder.expand_results_with_citations(
+            user_query, reranked_candidates, enable_citation_tracing=True, citation_config=config
+        )        
+        logger.info("Citation/Reference expansion time: %.2f", time() - start)
         paper_metadata = filter_paper_metadata
         paper_metadata.update(get_paper_metadata(
             {snippet["corpus_id"] for snippet in reranked_candidates if
@@ -164,6 +181,10 @@ class ScholarQA:
             f"Found {len(agg_df)} highly relevant papers after re-ranking and aggregating",
             step_estimated_time=1)
         logger.info("Reranking w. formatting time: %.2f", time() - start)
+
+        os.makedirs("outputs", exist_ok=True)
+        agg_df.to_csv(os.path.join("outputs", f"reranked_agg_{self.task_id or 'no_taskid'}.csv"), index=False)
+        logger.info(f"Saved reranked and aggregated dataframe to outputs/reranked_agg_{self.task_id or 'no_taskid'}.csv")
         return agg_df, paper_metadata
 
     @traceable(name="Generation: Extract relevant quotes from paper passages or filter")
@@ -509,7 +530,7 @@ class ScholarQA:
         s2_srch_metadata = [{k: v for k, v in paper.items() if
                              k == "corpus_id" or k in NUMERIC_META_FIELDS or k in CATEGORICAL_META_FIELDS} for paper in
                             s2_srch_res]
-        reranked_df, paper_metadata = self.rerank_and_aggregate(query, retrieved_candidates,
+        reranked_df, paper_metadata = self.rerank_and_aggregate(query, llm_processed_query, retrieved_candidates,
                                                                 {str(paper["corpus_id"]): paper for paper in
                                                                  s2_srch_metadata})
         if reranked_df.empty:
@@ -526,6 +547,7 @@ class ScholarQA:
 
         # step 2: outline planning and clustering
         cluster_json = self.step_clustering(query, per_paper_summaries.result, cost_args)
+        import ipdb; ipdb.set_trace()
         # Changing to expected format in the summary generation prompt
         plan_json = {f'{dim["name"]} ({dim["format"]})': dim["quotes"] for dim in cluster_json.result["dimensions"]}
         if not any([len(d) for d in plan_json.values()]):
@@ -533,15 +555,19 @@ class ScholarQA:
         event_trace.trace_clustering_event(cluster_json, plan_json)
 
         # step 2.1: extend the clustered snippets with their inline citations
+        import ipdb; ipdb.set_trace()
         per_paper_summaries_extd, quotes_metadata = self.extract_quote_citations(reranked_df,
                                                                                  per_paper_summaries.result,
                                                                                  plan_json, paper_metadata)
         event_trace.trace_inline_citation_following_event(per_paper_summaries_extd, quotes_metadata)
+        import ipdb; ipdb.set_trace()
 
         # step 3: generating output as per the outline
+        import ipdb; ipdb.set_trace()
         section_titles = [dim["name"] for dim in cluster_json.result["dimensions"]]
         gen_sections_iter = self.step_gen_iterative_summary(query, per_paper_summaries_extd,
                                                             plan_json, cost_args)
+        import ipdb; ipdb.set_trace()        
 
         json_summary, generated_sections, table_threads = [], [], []
         tables = [None for _ in cluster_json.result["dimensions"]]

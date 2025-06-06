@@ -4,7 +4,7 @@ import argparse
 import logging
 
 from scholarqa.config.config_setup import LogsConfig
-from scholarqa.rag.reranker.reranker_base import QWENReranker
+from scholarqa.rag.reranker.reranker_base import QWENRerankerVLLM
 from scholarqa.rag.retrieval import PaperFinderWithReranker
 from scholarqa.rag.retriever_base import FullTextRetriever
 from scholarqa.scholar_qa import ScholarQA
@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def setup_scholar_qa() -> ScholarQA:
+def setup_scholar_qa(reranker_model: str) -> ScholarQA:
     """Initialize and return a configured ScholarQA instance.
 
     Returns:
@@ -24,7 +24,7 @@ def setup_scholar_qa() -> ScholarQA:
     retriever = FullTextRetriever(n_retrieval=256, n_keyword_srch=20)
 
     # Initialize the Qwen reranker
-    reranker = QWENReranker(model_name="Qwen/Qwen3-Reranker-8B", use_flash_attention=True)
+    reranker = QWENRerankerVLLM(model_name=reranker_model)
 
     # Initialize the paper finder with the retriever and reranker
     paper_finder = PaperFinderWithReranker(
@@ -55,10 +55,23 @@ def main():
     parser = argparse.ArgumentParser(description="Query ScholarQA with a scientific question.")
     parser.add_argument("-q", "--query", required=True, help="The scientific question to ask")
     parser.add_argument("--inline-tags", action="store_true", help="Include inline paper tags in the output")
+    parser.add_argument(
+        "--reranker",
+        type=str,
+        default="Qwen/Qwen3-Reranker-4B", 
+        help="The reranker to use. If you specify '0.6' or '4', it will use 'Qwen/Qwen3-Reranker-0.6B' or 'Qwen/Qwen3-Reranker-4B' respectively. You can also provide a full model string for other rerankers."
+    )
     args = parser.parse_args()
+    
+    #parse the reranker model
+    reranker_model = args.reranker
+    if reranker_model == "0.6":
+        reranker_model = "Qwen/Qwen3-Reranker-0.6B"
+    elif reranker_model == "4":
+        reranker_model = "Qwen/Qwen3-Reranker-4B"
 
     # Initialize ScholarQA
-    scholar_qa = setup_scholar_qa()
+    scholar_qa = setup_scholar_qa(reranker_model)
 
     try:
         # Process the query
