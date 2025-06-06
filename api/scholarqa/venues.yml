@@ -1,0 +1,103 @@
+# Mapping from canonical conference/journal key → list of regex patterns that match common spellings
+# All patterns are intended to be used case‑insensitively (re.IGNORECASE).
+# -----------------------------------------------------------------------------
+
+NAACL:  # North American Chapter of ACL
+  - "^Proc\\.? of NAACL$"
+  - "^NAACL[- ]HLT ?\\d{4}$"
+  - "^Proceedings of the .* Conference of the North ?American Chapter of the Association for Computational Linguistics(: Human Language Technologies)?$"
+  - "^North ?American Chapter of the Association for Computational Linguistics.*$"
+  - "^Annual Meeting of the NAACL.*$"
+  - "^NAACL .*Human Language Technologies.*$"
+
+EMNLP:  # Empirical Methods in NLP
+  - "^Proc\\.? of EMNLP$"
+  - "^EMNLP ?\\d{4}$"
+  - "^Proceedings of the .* Conference on Empirical Methods in Natural Language Processing$"
+  - "^Conference on Empirical Methods in Natural Language Processing.*$"
+  - "^Empirical Methods in Natural Language Processing.*$"
+  - "^Conference on Empirical Methods in Natural Language Processing and Computational Natural Language Learning$"
+
+ACL:  # Annual Meeting of ACL
+  - "^Proc\\.? of ACL$"
+  - "^ACL ?\\d{4}$"
+  - "^Proceedings of the .* Annual Meeting of the Association for Computational Linguistics$"
+  - "^Annual Meeting of the Association for Computational Linguistics.*$"
+  - "^Association for Computational Linguistics Annual Meeting.*$"
+
+WWW:  # The Web Conference / International World Wide Web Conf.
+  - "^Proc\\.? of WWW$"
+  - "^{WWW} '.*: The Web Conference .*"
+  - "^WWW ?\\d{4}$"
+  - "^International World Wide Web Conference.*$"
+  - "^World Wide Web Conference.*$"
+  - "^The WebConf .*$"
+
+ICLR:  # International Conference on Learning Representations
+  - "^Proc\\.? of ICLR$"
+  - "^ICLR ?\\d{4}$"
+  - "^.*International Conference on Learning Representations$"
+  - "^Conf\\.? on Learning Representations.*$"
+  - "^International Conference on Learning Repres.*$"
+
+ICML:  # International Conference on Machine Learning
+  - "^Proc\\.? of ICML$"
+  - "^ICML ?\\d{4}$"
+  - "^.*International Conference on Machine Learning$"
+  - "^Machine Learning, Proceedings of the .* International Conference$"
+  - "^Proceedings of ICML.*$"
+  - "^International Conf\\.? on Machine Learning.*$"
+
+NeurIPS:  # Conference on Neural Information Processing Systems (formerly NIPS)
+  - "^Proc\\.? of NeurIPS$"
+  - "^NeurIPS ?\\d{4}$"
+  - "^NIPS ?\\d{4}$"
+  - "^.*Neural Information Processing Systems$"
+  - "^Advances in Neural Information Processing Systems ?\\d{1,2}$"
+  - "^Conference on Neural Information Processing Systems.*$"
+
+AAAI:  # AAAI Conference on Artificial Intelligence
+  - "^Proc\\.? of AAAI$"
+  - "^AAAI ?\\d{4}$"
+  - "^Proceedings of the .*AAAI.* Conference on Artificial Intelligence$"
+  - "^AAAI Conference on Artificial Intelligence.*$"
+  - "^Thirty-.* AAAI Conference on Artificial Intelligence$"
+
+KDD:  # ACM SIGKDD Conf. on Knowledge Discovery & Data Mining
+  - "^Proc\\.? of KDD$"
+  - "^KDD ?\\d{4}$"
+  - "^The .* {ACM} {SIGKDD} International Conference on Knowledge Discovery.*$"
+  - "^{ACM} {SIGKDD} Conference on Knowledge Discovery and Data Mining.*$"
+  - "^Knowledge Discovery and Data Mining,? .*KDD.*$"
+
+CVPR:  # IEEE/CVF Conference on Computer Vision and Pattern Recognition
+  - "^Proc\\.? of CVPR$"
+  - "^CVPR ?\\d{4}$"
+  - "^.*IEEE Computer Society Conference on Computer Vision and Pattern Recognition.*$"
+  - "^.*IEEE/CVF Conference on Computer Vision and Pattern Recognition,?.*$"
+  - "^Computer Vision and Pattern Recognition Conference.*$"
+
+ICDE:  # IEEE International Conference on Data Engineering
+  - "^Proc\\.? of ICDE$"
+  - "^ICDE ?\\d{4}$"
+  - "^.*International Conference on Data Engineering.*$"
+  - "^IEEE International Conference on Data Engineering.*$"
+
+SIGIR:  # ACM SIGIR Conference on Research & Development in Information Retrieval
+  - "^Proc\\.? of SIGIR$"
+  - "^SIGIR ?\\d{4}$"
+  - "^.*International {ACM} {SIGIR}.*$"
+  - "^ACM SIGIR Conference on Research and Development in Information Retrieval.*$"
+  - "^SIGIR Conference on Information Retrieval.*$"
+
+TACL:  # Transactions of the Association for Computational Linguistics (journal)
+  - "^TACL$"
+  - "^Transactions of the Association for Computational Linguistics.*$"
+  - "^Trans\\.? of the Association for Computational Linguistics.*$"
+  - "^Transactions of the ACL.*$"
+
+TMLR:  # Transactions on Machine Learning Research (journal)
+  - "^TMLR$"
+  - "^Transactions on Machine Learning Research.*$"
+  - "^Trans\\.? on Machine Learning Research.*$"
+
