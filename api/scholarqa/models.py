@@ -16,6 +16,21 @@ class PaperDetails(BaseModel):
     year: int = Field(description="Year of publication")
     venue: Optional[str] = Field(description="Venue of publication", default=None)
     authors: List[Author] = Field(description="Authors of the paper", default=None)
+    bibtex: Optional[str] = Field(default=None, description=(
+        "The bibtex of the paper"
+    ))
+    n_influential_citations: Optional[int] = Field(default=0, description=(
+        "The number of influential citations to the paper"
+    ))
+    abstract: Optional[str] = Field(default=None, description=(
+        "The abstract of the paper"
+    ))
+    first_author_affiliation: Optional[str] = Field(default=None, description=(
+        "The affiliation of the first author"
+    ))
+    last_author_affiliation: Optional[str] = Field(default=None, description=(
+        "The affiliation of the last author"
+    ))
     n_citations: Optional[int] = Field(default=0, description=(
         "The number of times the source paper has been cited"
     ))
@@ -58,6 +73,9 @@ class GeneratedSection(BaseModel):
     ))
     citations: List[CitationSrc] = Field(default=None, description=(
         "The citations used in the generated section"
+    ))
+    bibtex: Optional[str] = Field(default=None, description=(
+        "The bibtex of the citations used in the generated section"
     ))
     table: Optional[Any] = Field(default=None, description=("Table widget object for sections with list format"))
 

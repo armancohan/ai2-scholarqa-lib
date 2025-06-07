@@ -45,7 +45,7 @@ class ScholarQA:
             # Required for webapp since a new process is created for each request, for library task_id can be None initially and assigned for each request as below
             paper_finder: PaperFinder,
             task_id: str = None,
-            llm_model: str = GPT_41_MINI,
+            llm_model: str = None,
             multi_step_pipeline: MultiStepQAPipeline = None,
             state_mgr: AbsStateMgrClient = None,
             logs_config: LogsConfig = None,
@@ -62,7 +62,7 @@ class ScholarQA:
 
         self.task_id = task_id
         self.paper_finder = paper_finder
-        self.llm_model = llm_model
+        self.llm_model = llm_model or GPT_41_MINI
         fallback_llm = kwargs.get("fallback_llm", GPT_41)
         self.validate = kwargs.get("validate", "OPENAI_API_KEY" in os.environ)
         if not self.validate:
@@ -155,22 +155,23 @@ class ScholarQA:
                 f"Further re-rank and aggregate passages to focus on up to top {self.paper_finder.n_rerank} papers",
                 step_estimated_time=10)
         start = time()
-        reranked_candidates = self.paper_finder.rerank(user_query, retrieved_candidates)
+        initial_reranked_candidates = self.paper_finder.rerank(user_query, retrieved_candidates)
         logger.info("Reranking time: %.2f", time() - start)
+
+        # Extend the results with citations and references
         config = CitationTraceConfig(
             top_n_papers=5,
-            max_citations_per_paper=15,
+            max_citations_per_paper=20,
             max_references_per_paper=15,
-            max_traced_papers=20,
+            max_traced_papers=25,
             enable_second_round=True,
             second_round_top_n=10,
-            second_round_cap=10,
+            second_round_cap=20,
             year_range=llm_processed_query.result.search_filters.get("year") or "2022-2025"
         )
-
         reranked_candidates = self.paper_finder.expand_results_with_citations(
-            user_query, reranked_candidates, enable_citation_tracing=True, citation_config=config
-        )        
+            user_query, initial_reranked_candidates, enable_citation_tracing=True, citation_config=config
+        )     
         logger.info("Citation/Reference expansion time: %.2f", time() - start)
         paper_metadata = filter_paper_metadata
         paper_metadata.update(get_paper_metadata(
@@ -278,7 +279,11 @@ class ScholarQA:
             reqd_ref_df = retrieval_df[retrieval_df["reference_string"].apply(lambda x: x in req_ref_strs)].copy()
             # remove all special characters from the passages in the dataframe for approximate match
             reqd_ref_df["sentence_alpha"] = reqd_ref_df["sentences"].apply(
-                lambda x: [re.sub(r'[^a-zA-Z]', '', sentence["text"]).lower() for sentence in x])
+                lambda x: [
+                    re.sub(r'[^a-zA-Z]', '', sentence["text"]).lower()
+                    for sentence in x
+                ] if isinstance(x, list) else np.nan
+            )
             # iterate over the reqd_ref_df and get the snippets for each row from reqd_paper_summaries
             for row_idx, row in reqd_ref_df.iterrows():
                 ref_str, sentences, sent_alpha = row["reference_string"], row["sentences"], row["sentence_alpha"]
@@ -347,7 +352,8 @@ class ScholarQA:
 
     def populate_citations_metadata(self, avl_paper_metadata: Dict[str, Dict[str, Any]],
                                     paper_inline_cites: Dict[str, List],
-                                    per_paper_summaries: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+                                    per_paper_summaries: Dict[str, Any],
+                                    output_format: str = None) -> Dict[str, Dict[str, Any]]:
         """
         retrieve the metadata of the quote inline citations if not already present and update the quotes from string,
         to a dict of {"quote": quote, "inline_citations": {ref_str: abstract, ... }}.
@@ -371,11 +377,14 @@ class ScholarQA:
             curr_metadata += [additional_metadata[cite_id] for cite_id in cite_ids if
                               cite_id in additional_metadata]
             for idx, mdata in enumerate(curr_metadata):
-                mref_str = corpus_id_ref_str_map.get(mdata["corpusId"], f"[{mdata['corpusId']} | "
-                                                                        f"{get_ref_author_str(mdata['authors'])} | "
-                                                                        f"{make_int(mdata.get('year'))} "
-                                                                        f"| Citations: {make_int(mdata['citationCount'])}]")
-                mref_str = anyascii(mref_str)
+                if output_format == "latex":
+                    mref_str = mdata.get("bibtex") or mdata.get("citationStyles", {}).get("bibtex")
+                else:
+                    mref_str = corpus_id_ref_str_map.get(mdata["corpusId"], f"[{mdata['corpusId']} | "
+                                                                            f"{get_ref_author_str(mdata['authors'])} | "
+                                                                            f"{make_int(mdata.get('year'))} "
+                                                                            f"| Citations: {make_int(mdata['citationCount'])}]")
+                    mref_str = anyascii(mref_str)
                 per_paper_summaries[ref_str]["quote"] = per_paper_summaries[ref_str]["quote"].replace(
                     f"({mdata['corpusId']})",
                     f"({get_ref_author_str(mdata['authors'])}, {make_int(mdata.get('year'))})")
@@ -390,7 +399,8 @@ class ScholarQA:
         return per_paper_summaries
 
     def extract_quote_citations(self, score_df: pd.DataFrame, per_paper_summaries: Dict[str, str],
-                                plan_json: Dict[str, List[int]], paper_metadata: Dict[str, Any]) -> Tuple[
+                                plan_json: Dict[str, List[int]], paper_metadata: Dict[str, Any],
+                                output_format: str = None) -> Tuple[
         Dict[str, Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
         quotes_metadata = self.passage_to_quotes_metadata(score_df, per_paper_summaries, plan_json)
         per_paper_inline_cites = {
@@ -399,7 +409,7 @@ class ScholarQA:
         }
         per_paper_inline_cites = {k: sorted(v) for k, v in per_paper_inline_cites.items() if v}
         per_paper_summaries_extd = self.populate_citations_metadata(paper_metadata, per_paper_inline_cites,
-                                                                    per_paper_summaries)
+                                                                    per_paper_summaries, output_format=output_format)
         for ref_str, quote_map in per_paper_summaries_extd.items():
             if quotes_metadata.get(ref_str):
                 quote_parts = quote_map["quote"].split("...")
@@ -414,7 +424,8 @@ class ScholarQA:
             generated_section = GeneratedSection(title=section["title"],
                                                  tldr=section["tldr"],
                                                  text=section["text"],
-                                                 citations=citations)
+                                                 citations=citations,
+                                                 bibtex=section.get("bibtex") or section.get("citationStyles", {}).get("bibtex"))
             return generated_section
         except Exception as e:
             logger.error(f"Error while converting json to TaskResult: {e}")
@@ -423,11 +434,11 @@ class ScholarQA:
     def postprocess_json_output(self, json_summary: List[Dict[str, Any]], **kwargs) -> None:
         pass
 
-    def answer_query(self, query: str, inline_tags: bool = True) -> Dict[str, Any]:
+    def answer_query(self, query: str, inline_tags: bool = True, output_format: str = None) -> Dict[str, Any]:
         task_id = str(uuid4())
         self.logs_config.task_id = task_id
         logger.info("New task")
-        tool_request = ToolRequest(task_id=task_id, query=query, user_id="lib_user")
+        tool_request = ToolRequest(task_id=task_id, query=query, user_id="lib_user", output_format=output_format)
         try:
             task_result = self.run_qa_pipeline(tool_request, inline_tags)
         except Exception as e:
@@ -471,7 +482,7 @@ class ScholarQA:
         return self.tool_request.user_id, self.task_id
 
     @traceable(run_type="tool", name="ai2_scholar_qa_trace")
-    def run_qa_pipeline(self, req: ToolRequest, inline_tags=False) -> TaskResult:
+    def run_qa_pipeline(self, req: ToolRequest, inline_tags=False, output_format="latex") -> TaskResult:
         """
                 This function takes a query and returns a response.
                 Goes through the following steps:
@@ -547,7 +558,6 @@ class ScholarQA:
 
         # step 2: outline planning and clustering
         cluster_json = self.step_clustering(query, per_paper_summaries.result, cost_args)
-        import ipdb; ipdb.set_trace()
         # Changing to expected format in the summary generation prompt
         plan_json = {f'{dim["name"]} ({dim["format"]})': dim["quotes"] for dim in cluster_json.result["dimensions"]}
         if not any([len(d) for d in plan_json.values()]):
@@ -555,19 +565,16 @@ class ScholarQA:
         event_trace.trace_clustering_event(cluster_json, plan_json)
 
         # step 2.1: extend the clustered snippets with their inline citations
-        import ipdb; ipdb.set_trace()
         per_paper_summaries_extd, quotes_metadata = self.extract_quote_citations(reranked_df,
                                                                                  per_paper_summaries.result,
-                                                                                 plan_json, paper_metadata)
+                                                                                 plan_json, paper_metadata,
+                                                                                 output_format=output_format)
         event_trace.trace_inline_citation_following_event(per_paper_summaries_extd, quotes_metadata)
-        import ipdb; ipdb.set_trace()
 
         # step 3: generating output as per the outline
-        import ipdb; ipdb.set_trace()
         section_titles = [dim["name"] for dim in cluster_json.result["dimensions"]]
         gen_sections_iter = self.step_gen_iterative_summary(query, per_paper_summaries_extd,
                                                             plan_json, cost_args)
-        import ipdb; ipdb.set_trace()        
 
         json_summary, generated_sections, table_threads = [], [], []
         tables = [None for _ in cluster_json.result["dimensions"]]
@@ -592,7 +599,7 @@ class ScholarQA:
                 section_json = \
                     get_json_summary(self.multi_step_pipeline.llm_model, [section_text], per_paper_summaries_extd,
                                      paper_metadata,
-                                     citation_ids, inline_tags)[0]
+                                     citation_ids, inline_tags, output_format)[0]
                 section_json["format"] = cluster_json.result["dimensions"][idx]["format"]
 
                 json_summary.append(section_json)

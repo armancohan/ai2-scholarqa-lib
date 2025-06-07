@@ -1,5 +1,5 @@
 import re
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from scholarqa.utils import make_int
 from langsmith import traceable
 import logging
@@ -100,19 +100,21 @@ def pop_ref_data(ref_str_id, ref_corpus_id, fixed_quote, curr_paper_metadata) ->
         curr_ref["paper"]["year"] = make_int(curr_paper_metadata.get("year", 0))
         curr_ref["paper"]["venue"] = curr_paper_metadata["venue"]
         curr_ref["paper"]["n_citations"] = curr_paper_metadata["citationCount"]
+        curr_ref["paper"]["bibtex"] = curr_paper_metadata.get("citationStyles", {}).get("bibtex")
     return curr_ref
 
 
 @traceable(name="Postprocessing: Converted LLM generated output to json summary")
 def get_json_summary(llm_model: str, summary_sections: List[str], summary_quotes: Dict[str, Any],
                      paper_metadata: Dict[str, Any], citation_ids: Dict[str, Dict[int, str]],
-                     inline_tags=False) -> List[Dict[str, Any]]:
+                     inline_tags=False, output_format: str = 'latex') -> List[Dict[str, Any]]:
     text_ref_format = '<Paper corpusId="{corpus_id}" paperTitle="{ref_str}" isShortName></Paper>'
     sections = []
     llm_name_parts = llm_model.split("/", maxsplit=1)
     llm_ref_format = f'<Model name="{llm_name_parts[0].capitalize()}" version="{llm_name_parts[1]}">'
     inline_citation_quotes = {k: v for incite in summary_quotes.values() for k, v in
                               incite["inline_citations"].items()}
+    failed_refs = []
     for sec in summary_sections:
         curr_section = get_section_text(sec)
         text = curr_section["text"]
@@ -146,18 +148,38 @@ def get_json_summary(llm_model: str, summary_sections: List[str], summary_quotes
                             fixed_quote = fixed_quote[:-3]
                         # dict to save reference strings as there is a possibility of having multiple papers in the same year from the same author
                         refs_done.add(ref_corpus_id)
-                        ref_str_id = resolve_ref_id(ref_str, ref_corpus_id, citation_ids)
-                        ref_data = pop_ref_data(ref_str_id, ref_corpus_id, fixed_quote,
-                                                paper_metadata.get(ref_corpus_id))
-                        if inline_tags:
-                            curr_section["text"] = curr_section["text"].replace(ref, text_ref_format.format(
-                                corpus_id=ref_data["paper"]["corpus_id"], ref_str=ref_data["id"]))
+                        
+                        if output_format == 'latex':
+                            curr_paper_meta = paper_metadata.get(ref_corpus_id)
+                            bibtex_str = curr_paper_meta.get('citationStyles', {}).get('bibtex') if curr_paper_meta else None
+                            
+                            replacement_str = ""
+                            if bibtex_str:
+                                match = re.search(r'@\w+\{([^,]+),', bibtex_str)
+                                if match:
+                                    key = match.group(1).strip()
+                                    replacement_str = f"\\citep{{{key}}}"
+
+                            if not replacement_str:
+                                logger.warning(f"Could not generate LaTeX citation for {ref_corpus_id}. Omitting from text.")
+
+                            curr_section["text"] = curr_section["text"].replace(ref, replacement_str)
+                            ref_data = pop_ref_data(replacement_str, ref_corpus_id, fixed_quote,
+                                                    paper_metadata.get(ref_corpus_id))
                         else:
-                            curr_section["text"] = curr_section["text"].replace(ref, ref_data["id"])
+                            ref_str_id = resolve_ref_id(ref_str, ref_corpus_id, citation_ids)
+                            ref_data = pop_ref_data(ref_str_id, ref_corpus_id, fixed_quote,
+                                                    paper_metadata.get(ref_corpus_id))
+                            if inline_tags:
+                                curr_section["text"] = curr_section["text"].replace(ref, text_ref_format.format(
+                                    corpus_id=ref_data["paper"]["corpus_id"], ref_str=ref_data["id"]))
+                            else:
+                                curr_section["text"] = curr_section["text"].replace(ref, ref_data["id"])
                         refs_list.append(ref_data)
                 else:
                     curr_section["text"] = curr_section["text"].replace(ref, "")
                     logger.warning(f"Reference not found in the summary quotes: {ref}")
+                    failed_refs.append(ref)
             curr_section["text"] = re.sub(r"[ ]+", " ", curr_section["text"])
             # curr_section["text"] = curr_section["text"].replace(") ; (", "]; [")
             curr_section["citations"] = refs_list
@@ -169,4 +191,5 @@ def get_json_summary(llm_model: str, summary_sections: List[str], summary_quotes
                 else:
                     curr_section["tldr"] += " (LLM Memory)"
             sections.append(curr_section)
+    logger.warning(f"Failed to find {len(failed_refs)} / {len(references)} references in the summary quotes")
     return sections

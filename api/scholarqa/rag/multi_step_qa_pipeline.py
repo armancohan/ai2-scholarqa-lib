@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from enum import Enum
-from typing import Tuple, Dict, List, Any, Generator
+from typing import Tuple, Dict, List, Any, Generator, Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -55,22 +55,52 @@ class MultiStepQAPipeline:
 
     def step_select_quotes(self, query: str, scored_df: pd.DataFrame, sys_prompt: str) -> Tuple[
         Dict[str, str], List[CompletionResult]]:
-
+        """
+        Extracts relevant quotes from a list of papers for a given query.
+        """
         logger.info(
-            f"Querying {self.llm_model} to extract quotes from these papers with {self.batch_workers} parallel workers")
-        tup_items = {k: v for k, v in
-                     zip(scored_df["reference_string"], scored_df["relevance_judgment_input_expanded"])}
-        messages = [USER_PROMPT_PAPER_LIST_FORMAT.format(query, v) for k, v in tup_items.items()]
-        completion_results = batch_llm_completion(self.llm_model, messages=messages, system_prompt=sys_prompt,
-                                                  max_workers=self.batch_workers, fallback=self.fallback_llm,
-                                                  **self.llm_kwargs)
-        quotes = [
-            cr.content if cr.content != "None" and not cr.content.startswith("None\n") and not cr.content.startswith(
-                "None ")
-            else "" for cr in completion_results]
-        per_paper_summaries = {t[0]: quote for t, quote in zip(tup_items.items(), quotes) if len(quote) > 10}
-        per_paper_summaries = dict(sorted(per_paper_summaries.items(), key=lambda x: x[0]))
-        return per_paper_summaries, completion_results
+            f"Querying {self.llm_model} to extract quotes from {len(scored_df)} papers "
+            f"with {self.batch_workers} parallel workers."
+        )
+
+        # Prepare prompts for each paper for batch LLM processing.
+        reference_strings = scored_df["reference_string"]
+        paper_contents = scored_df["relevance_judgment_input_expanded"]
+        messages = [USER_PROMPT_PAPER_LIST_FORMAT.format(query, content) for content in paper_contents]
+
+        # Get quote extractions from the LLM.
+        completion_results = batch_llm_completion(
+            self.llm_model,
+            messages=messages,
+            system_prompt=sys_prompt,
+            max_workers=self.batch_workers,
+            fallback=self.fallback_llm,
+            **self.llm_kwargs,
+        )
+
+        # Clean up "None" responses from the LLM.
+        def _clean_quote(content: Optional[str]) -> str:
+            """Returns an empty string if the LLM provided a 'None' response or content is None."""
+            if not content:
+                return ""
+            if content == "None" or content.startswith("None\n") or content.startswith("None "):
+                return ""
+            return content
+
+        quotes = [_clean_quote(cr.content) for cr in completion_results]
+
+        # Create a dictionary of {reference_string: quote} for valid quotes.
+        # A valid quote must be longer than 10 characters.
+        per_paper_summaries = {
+            ref: quote
+            for ref, quote in zip(reference_strings, quotes)
+            if len(quote) > 10
+        }
+
+        # Sort the summaries by reference string for consistent output order.
+        sorted_summaries = dict(sorted(per_paper_summaries.items()))
+
+        return sorted_summaries, completion_results
 
     def step_clustering(self, query: str, per_paper_summaries: Dict[str, str],
                         sys_prompt: str) -> Tuple[Dict[str, Any], CompletionResult]:

@@ -3,6 +3,7 @@ import os
 import sys
 from collections import namedtuple
 from logging import Formatter
+import pandas as pd
 from typing import Any, Dict, List, Optional, Set, Union
 
 import requests
@@ -15,7 +16,7 @@ S2_HEADERS = {"x-api-key": S2_APIKEY}
 S2_API_BASE_URL = "https://api.semanticscholar.org/graph/v1/"
 CompletionResult = namedtuple("CompletionCost", ["content", "model", "cost", "input_tokens", "output_tokens", "total_tokens"])
 NUMERIC_META_FIELDS = {"year", "citationCount", "referenceCount", "influentialCitationCount"}
-CATEGORICAL_META_FIELDS = {"title", "abstract", "corpusId", "authors", "venue", "isOpenAccess", "openAccessPdf", "fieldsOfStudy", "citationStyles", "venue"}
+CATEGORICAL_META_FIELDS = {"title", "abstract", "corpusId", "authors", "venue", "isOpenAccess", "openAccessPdf", "fieldsOfStudy", "citationStyles", "venue", 'citationCount', 'title', 'url', 'externalIds', 'influentialCitationCount'}
 METADATA_FIELDS = ",".join(CATEGORICAL_META_FIELDS.union(NUMERIC_META_FIELDS))
 
 
@@ -151,6 +152,16 @@ def get_paper_metadata(corpus_ids: Set[str], fields=METADATA_FIELDS, batch_size:
             for pdata in paper_data
             if pdata and "corpusId" in pdata
         }
+        # Add individual URLs for each paper in the batch
+        for pdata in paper_data:
+            if pdata and "corpusId" in pdata:
+                cid = str(pdata["corpusId"])
+                if "externalIds" in pdata and "ArXiv" in pdata["externalIds"]:
+                    batch_metadata[cid]["arxiv_url"] = f"https://arxiv.org/pdf/{pdata['externalIds']['ArXiv']}"
+                if "externalIds" in pdata and "ACL" in pdata["externalIds"]:
+                    batch_metadata[cid]["acl_url"] = f"https://aclanthology.org/{pdata['externalIds']['ACL']}"
+                if "url" in pdata:
+                    batch_metadata[cid]["url"] = pdata["url"]
         all_paper_metadata.update(batch_metadata)
     return all_paper_metadata
 
@@ -161,3 +172,60 @@ def init_task(self, task_id: str, tool_request: Any):
     except (ValueError, TypeError) as e:
         logging.warning(f"Failed to generate UUID for user_id: {e}")
         pass
+
+
+def format_sections_to_markdown(row: List[Dict[str, Any]]) -> str:
+    # Handle cases where row might not be a list (e.g., NaN from pandas).
+    if not isinstance(row, list) or len(row) == 0:
+        logger.warning(f"Row is not a list or is empty: {row}")
+        return ""
+    # convenience function to format the sections of a paper into markdown for function below
+    # Convert the list of dictionaries to a DataFrame
+    print('*********************')
+    print(row)
+    sentences_df = pd.DataFrame(row)
+    if sentences_df.empty:
+        return ""
+    # Sort by 'char_offset' to ensure sentences are in the correct order
+    sentences_df.sort_values(by="char_start_offset", inplace=True)
+
+    # Group by 'section_title', concatenate sentences, and maintain overall order by the first 'char_offset'
+    grouped = sentences_df.groupby("section_title", sort=False)["text"].apply("\n...\n".join)
+
+    # Exclude sections titled 'Abstract' or 'Title'
+    grouped = grouped[(grouped.index != "abstract") & (grouped.index != "title")]
+
+    # Format as Markdown
+    markdown_output = "\n\n".join(f"## {title}\n{text}" for title, text in grouped.items())
+    return markdown_output    
+
+
+def normalize_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
+    paper = {k: make_int(v) if k in NUMERIC_META_FIELDS else paper.get(k) 
+            for k, v in paper.items()}
+    if "externalIds" in paper:
+        if "ArXiv" in paper["externalIds"]:
+            paper["arxivId"] = paper["externalIds"]["ArXiv"]
+            paper["arxiv_url"] = f"https://arxiv.org/pdf/{paper['externalIds']['ArXiv']}"
+        if "ACL" in paper["externalIds"]:
+            paper["aclId"] = paper["externalIds"]["ACL"]
+            paper["acl_url"] = f"https://aclanthology.org/{paper['externalIds']['ACL']}"
+    if "corpusId" in paper:
+        paper["corpus_id"] = str(paper["corpusId"])
+    # added so that the results are consistent with the snippet_search api results
+    if 'text' not in paper:
+        paper["text"] = paper["abstract"]
+    if 'section_title' not in paper:
+        paper["section_title"] = "abstract"
+        paper["char_start_offset"] = 0
+    if 'sentence_offsets' not in paper:
+        paper["sentence_offsets"] = []
+    if 'ref_mentions' not in paper:
+        paper["ref_mentions"] = []
+    if 'score' not in paper:
+        paper["score"] = 0.0
+    if 'stype' not in paper:
+        paper["stype"] = "public_api"
+    if 'pdf_hash' not in paper:
+        paper["pdf_hash"] = ""
+    return paper
