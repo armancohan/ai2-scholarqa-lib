@@ -1,4 +1,5 @@
 import logging
+import re
 from abc import abstractmethod
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -6,7 +7,7 @@ import pandas as pd
 
 from scholarqa.rag.reranker.reranker_base import AbstractReranker
 from scholarqa.rag.retriever_base import AbstractRetriever
-from scholarqa.utils import make_int, get_ref_author_str, query_s2_api
+from scholarqa.utils import make_int, get_ref_author_str, query_s2_api, format_sections_to_markdown
 from anyascii import anyascii
 from .citation_config import CitationTraceConfig
 
@@ -227,26 +228,9 @@ class PaperFinder(AbsPaperFinder):
         sorted_ctxs = sorted(paper_snippets.values(), key=lambda x: x["relevance_judgement"], reverse=True)
         logger.info(f"Scores after aggregation: {[s['relevance_judgement'] for s in sorted_ctxs]}")
         return sorted_ctxs
+
     
     def format_retrieval_response_orig(self, agg_reranked_candidates: List[Dict[str, Any]]) -> pd.DataFrame:
-        def format_sections_to_markdown(row: List[Dict[str, Any]]) -> str:
-            # convenience function to format the sections of a paper into markdown for function below
-            # Convert the list of dictionaries to a DataFrame
-            sentences_df = pd.DataFrame(row)
-            if sentences_df.empty:
-                return ""
-            # Sort by 'char_offset' to ensure sentences are in the correct order
-            sentences_df.sort_values(by="char_start_offset", inplace=True)
-
-            # Group by 'section_title', concatenate sentences, and maintain overall order by the first 'char_offset'
-            grouped = sentences_df.groupby("section_title", sort=False)["text"].apply("\n...\n".join)
-
-            # Exclude sections titled 'Abstract' or 'Title'
-            grouped = grouped[(grouped.index != "abstract") & (grouped.index != "title")]
-
-            # Format as Markdown
-            markdown_output = "\n\n".join(f"## {title}\n{text}" for title, text in grouped.items())
-            return markdown_output
 
         df = pd.DataFrame(agg_reranked_candidates)
         try:
@@ -300,7 +284,7 @@ class PaperFinder(AbsPaperFinder):
                 row: anyascii(f"[{make_int(row.corpus_id)} | {get_ref_author_str(row.authors)} | "
                               f"{make_int(row['year'])} | Citations: {make_int(row['citation_count'])}]"),
             axis=1,
-        )
+        )        
         return df    
 
     def format_retrieval_response(self, agg_reranked_candidates: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -336,9 +320,57 @@ class PaperFinder(AbsPaperFinder):
                     return affs[0].get("name")
                 return affs[0]
             return None
+        
+        df.rename(
+            columns={
+                "citationCount": "citation_count",
+                "referenceCount": "reference_count",
+                "influentialCitationCount": "influential_citation_count",
+            },
+            inplace=True,
+        )        
 
         df["first_author_affiliation"] = df["corpus_id"].apply(lambda pid: get_affiliation_for_paper(pid, "first"))
         df["last_author_affiliation"] = df["corpus_id"].apply(lambda pid: get_affiliation_for_paper(pid, "last"))
+
+        # Add "reference_string" (using the same lambda as in "format_retrieval_response_orig")
+        df["reference_string"] = df.apply(
+            lambda row: anyascii(f"[{make_int(row.corpus_id)} | {get_ref_author_str(row.authors)} | {make_int(row['year'])} | Citations: {make_int(row['citation_count'])}]"),
+            axis=1
+        )
+
+        def get_latex_citation(row: pd.Series) -> str:
+            """
+            Extracts bibtex key and formats a \\citep citation string.
+            We use \\citep by default as we cannot determine from here whether
+            a textual citation (\\citet) is needed.
+            """
+            bibtex_str = row.get('citationStyles', {}).get('bibtex')
+            if not bibtex_str or not isinstance(bibtex_str, str):
+                return ""
+
+            # Extract the citation key from a bibtex entry like @article{key, ...}
+            match = re.search(r'@\w+\{([^,]+),', bibtex_str)
+            if match:
+                key = match.group(1).strip()
+                return f"\\citep{{{key}}}"
+            return ""             
+        
+        df["reference_string_latex"] = df.apply(get_latex_citation, axis=1)
+        df["reference_bibtex"] = df.apply(lambda row: row.get('citationStyles', {}).get('bibtex'), axis=1)        
+        
+        # now we need the big relevance_judgment_input_expanded
+        # top of it
+        # \n## Abstract\n{row['abstract']} --> Not using abstracts OR could use and not show
+        prepend_text = df.apply(
+            lambda
+                row: f"# Title: {row['title']}\n# Venue: {row['venue']}\n"
+                     f"# Authors: {', '.join([a['name'] for a in row['authors']])}\n# Bibtex: {row['reference_bibtex']}\n# Citation Marker: {row['reference_string_latex']}\n## Abstract\n{row['abstract']}\n",
+            axis=1,
+        )
+        section_text = df["sentences"].apply(format_sections_to_markdown)
+        # update relevance_judgment_input
+        df.loc[:, "relevance_judgment_input_expanded"] = prepend_text + section_text
 
         return df
 

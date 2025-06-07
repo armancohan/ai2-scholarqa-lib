@@ -5,8 +5,9 @@ from threading import Thread
 from time import time
 from typing import Any, Dict, Generator, List, Tuple
 from uuid import uuid4
-
+import numpy as np
 import pandas as pd
+
 from anyascii import anyascii
 from langsmith import traceable
 from scholarqa.config.config_setup import LogsConfig

@@ -4,6 +4,9 @@ import argparse
 import logging
 
 from scholarqa.config.config_setup import LogsConfig
+from scholarqa.llms.constants import (GPT_4_TURBO, GPT_41, GPT_41_MINI, GPT_4o, 
+                                      CLAUDE_3_OPUS, CLAUDE_35_SONNET, CLAUDE_4_SONNET,
+                                      LLAMA_405_TOGETHER_AI)
 from scholarqa.rag.reranker.reranker_base import QWENRerankerVLLM
 from scholarqa.rag.retrieval import PaperFinderWithReranker
 from scholarqa.rag.retriever_base import FullTextRetriever
@@ -12,6 +15,18 @@ from scholarqa.scholar_qa import ScholarQA
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Available models from constants.py
+AVAILABLE_MODELS = {
+    GPT_4_TURBO,
+    GPT_41,
+    GPT_41_MINI,
+    GPT_4o,
+    CLAUDE_3_OPUS,
+    CLAUDE_35_SONNET,
+    CLAUDE_4_SONNET,
+    LLAMA_405_TOGETHER_AI,
+}
 
 
 def setup_scholar_qa(reranker_model: str, llm_model: str = None) -> ScholarQA:
@@ -65,9 +80,15 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        help="The LLM model to use (e.g., 'gpt-4', 'claude-3-sonnet'). If not specified, uses the default GPT_41_MINI."
+        help=f"The LLM model to use. Available models: {', '.join(sorted(AVAILABLE_MODELS))}. If not specified, uses the default GPT_41_MINI."
     )
     args = parser.parse_args()
+    
+    # Validate model if provided
+    if args.model and args.model not in AVAILABLE_MODELS:
+        print(f"Error: Model '{args.model}' is not available.")
+        print(f"Available models: {', '.join(sorted(AVAILABLE_MODELS))}")
+        return
     
     #parse the reranker model
     reranker_model = args.reranker

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Any, Dict
 import logging
 from dotenv import load_dotenv
-from scholarqa.utils import query_s2_api, METADATA_FIELDS, make_int, NUMERIC_META_FIELDS, get_paper_metadata
+from scholarqa.utils import query_s2_api, METADATA_FIELDS, make_int, NUMERIC_META_FIELDS, get_paper_metadata, normalize_paper
 
 load_dotenv()
 
@@ -58,6 +58,22 @@ class FullTextRetriever(AbstractRetriever):
                     snippet["meta_year"] = meta["year"]
                 if "abstract" in meta:
                     snippet["meta_abstract"] = meta["abstract"]
+                if "citationCount" in meta:
+                    snippet["meta_citationCount"] = meta["citationCount"]
+                if "influentialCitationCount" in meta:
+                    snippet["meta_influentialCitationCount"] = meta["influentialCitationCount"]
+                if "url" in meta:
+                    snippet["meta_url"] = meta["url"]
+                if "externalIds" in meta:
+                    snippet["meta_externalIds"] = meta["externalIds"]
+                    if "ArXiv" in meta["externalIds"]:
+                        snippet["meta_arxivId"] = meta["externalIds"]["ArXiv"]
+                        snippet["meta_arxiv_url"] = f"https://arxiv.org/pdf/{meta['externalIds']['ArXiv']}"
+                    if "ACL" in meta["externalIds"]:
+                        snippet["meta_aclId"] = meta["externalIds"]["ACL"]
+                        snippet["meta_acl_url"] = f"https://aclanthology.org/{meta['externalIds']['ACL']}"
+                if "fieldsOfStudy" in meta:
+                    snippet["meta_fieldsOfStudy"] = meta["fieldsOfStudy"]
         return snippets_list
 
     def snippet_search(self, query: str, **filter_kwargs) -> List[Dict[str, Any]]:
@@ -159,9 +175,7 @@ class FullTextRetriever(AbstractRetriever):
                         paper = citation_entry["citingPaper"]
                         if paper.get("corpusId") and paper.get("title"):
                             # Normalize the paper data format
-                            normalized_paper = {k: make_int(v) if k in NUMERIC_META_FIELDS else paper.get(k) 
-                                              for k, v in paper.items()}
-                            normalized_paper["corpus_id"] = str(paper["corpusId"])
+                            normalized_paper = normalize_paper(paper)
                             citations.append(normalized_paper)
             
             logger.info(f"Retrieved {len(citations)} citations for paper {corpus_id}")
@@ -188,9 +202,7 @@ class FullTextRetriever(AbstractRetriever):
                         paper = reference_entry["citedPaper"]
                         if paper.get("corpusId") and paper.get("title"):
                             # Normalize the paper data format
-                            normalized_paper = {k: make_int(v) if k in NUMERIC_META_FIELDS else paper.get(k) 
-                                              for k, v in paper.items()}
-                            normalized_paper["corpus_id"] = str(paper["corpusId"])
+                            normalized_paper = normalize_paper(paper)
                             references.append(normalized_paper)
             # sort by isInfluential
             references.sort(key=lambda x: x.get("isInfluential", 0), reverse=True)
