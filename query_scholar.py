@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def setup_scholar_qa(reranker_model: str) -> ScholarQA:
+def setup_scholar_qa(reranker_model: str, llm_model: str = None) -> ScholarQA:
     """Initialize and return a configured ScholarQA instance.
 
     Returns:
@@ -44,6 +44,7 @@ def setup_scholar_qa(reranker_model: str) -> ScholarQA:
     scholar_qa = ScholarQA(
         paper_finder=paper_finder,
         logs_config=logs_config,
+        llm_model=llm_model,
         # Disable table generation for simplicity
         run_table_generation=False,
     )
@@ -61,6 +62,11 @@ def main():
         default="Qwen/Qwen3-Reranker-4B", 
         help="The reranker to use. If you specify '0.6' or '4', it will use 'Qwen/Qwen3-Reranker-0.6B' or 'Qwen/Qwen3-Reranker-4B' respectively. You can also provide a full model string for other rerankers."
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        help="The LLM model to use (e.g., 'gpt-4', 'claude-3-sonnet'). If not specified, uses the default GPT_41_MINI."
+    )
     args = parser.parse_args()
     
     #parse the reranker model
@@ -71,12 +77,29 @@ def main():
         reranker_model = "Qwen/Qwen3-Reranker-4B"
 
     # Initialize ScholarQA
-    scholar_qa = setup_scholar_qa(reranker_model)
+    scholar_qa = setup_scholar_qa(reranker_model, args.model)
 
     try:
         # Process the query
-        result = scholar_qa.answer_query(args.query, inline_tags=args.inline_tags)
+        result = scholar_qa.answer_query(args.query, inline_tags=args.inline_tags, output_format="latex")
 
+        with open("scholar_query_results.txt", "w") as f:
+            # Print the results
+            for section in result["sections"]:
+                f.write(f"\n{section['title']}\n")
+                f.write("-" * len(section["title"]) + "\n")
+                if section.get("tldr"):
+                    f.write(f"\nTLDR: {section['tldr']}\n\n")
+                f.write(section["text"] + "\n")
+                if section.get("citations"):
+                    f.write("\nCitations:\n")
+                    f.write("```\n")
+                    for citation in section["citations"]:
+                        paper = citation["paper"]
+                        f.write(paper['bibtex'] + "\n")
+                    f.write("```\n")
+                f.write("\n" + "=" * 80 + "\n\n")
+        
         # Print the results
         for section in result["sections"]:
             print(f"\n{section['title']}")
@@ -86,9 +109,11 @@ def main():
             print(section["text"])
             if section.get("citations"):
                 print("\nCitations:")
+                print("```")
                 for citation in section["citations"]:
                     paper = citation["paper"]
-                    print(f"- {paper['title']} ({paper['year']})")
+                    print(paper['bibtex'])
+                print("```")
             print("\n" + "=" * 80 + "\n")
 
     except Exception as e:
