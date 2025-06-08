@@ -88,7 +88,7 @@ async def process_query(message: dict, client_id: str):
     """Process a scholar query and send progress updates via WebSocket"""
     try:
         query = message["query"]
-        config_name = message.get("config_name", "default")
+        config_name = message.get("config_name", "llm_reranker")
         inline_tags = message.get("inline_tags", False)
         
         # Send initial status
@@ -99,10 +99,10 @@ async def process_query(message: dict, client_id: str):
         }, client_id)
         
         # Load configuration
-        config_file = "config.json"
+        config_file = "config_example.json"
         config = load_config(config_file, config_name)
-        
-        if not config and config_name != "default":
+        import ipdb; ipdb.set_trace()
+        if not config and config_name != "llm_reranker":
             await manager.send_message({
                 "type": "error",
                 "message": f"Configuration '{config_name}' not found"
