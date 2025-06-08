@@ -24,10 +24,10 @@
   "llm_reranker": {
     "reranker_type": "llm",
     "reranker_llm_model": "openai/gpt-4.1-mini",
-    "model": "openai/gpt-4.1-mini",
+    "model": "openai/gpt-4.1",
     "clustering_model": "openai/gpt-4.1",
-    "quote_extraction_model": "anthropic/claude-sonnet-4-20250514",
-    "summary_generation_model": "anthropic/claude-sonnet-4-20250514",
+    "quote_extraction_model": "openai/gpt-4.1",
+    "summary_generation_model": "openai/gpt-4.1",
     "fallback_model": "openai/gpt-4.1-mini"
   },
   "premium": {
