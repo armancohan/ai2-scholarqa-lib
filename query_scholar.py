@@ -222,6 +222,10 @@ def main():
                         f.write(paper['bibtex'] + "\n")
                     f.write("```\n")
                 f.write("\n" + "=" * 80 + "\n\n")
+            
+            # Write cost information to file
+            if "cost" in result:
+                f.write(f"\nTotal LLM Cost: ${result['cost']:.6f}\n")
         
         # Print the results
         for section in result["sections"]:
@@ -238,6 +242,11 @@ def main():
                     print(paper['bibtex'])
                 print("```")
             print("\n" + "=" * 80 + "\n")
+
+        # Print cost information
+        if "cost" in result:
+            print(f"Total LLM Cost: ${result['cost']:.6f}")
+            print("=" * 50)
 
     except Exception as e:
         logger.error(f"Error processing query: {e}")
