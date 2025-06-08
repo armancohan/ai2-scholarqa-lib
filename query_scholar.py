@@ -7,7 +7,7 @@ from scholarqa.config.config_setup import LogsConfig
 from scholarqa.llms.constants import (GPT_4_TURBO, GPT_41, GPT_41_MINI, GPT_4o, 
                                       CLAUDE_3_OPUS, CLAUDE_35_SONNET, CLAUDE_4_SONNET,
                                       LLAMA_405_TOGETHER_AI)
-from scholarqa.rag.reranker.reranker_base import QWENRerankerVLLM
+from scholarqa.rag.reranker.reranker_base import QWENRerankerVLLM, LLMReranker, RERANKER_MAPPING
 from scholarqa.rag.retrieval import PaperFinderWithReranker
 from scholarqa.rag.retriever_base import FullTextRetriever
 from scholarqa.scholar_qa import ScholarQA
@@ -29,7 +29,8 @@ AVAILABLE_MODELS = {
 }
 
 
-def setup_scholar_qa(reranker_model: str, llm_model: str = None, decomposer_model: str = None, 
+def setup_scholar_qa(reranker_model: str, reranker_type: str = "qwen_vllm", reranker_llm_model: str = None,
+                     llm_model: str = None, decomposer_model: str = None, 
                      quote_extraction_model: str = None, clustering_model: str = None,
                      summary_generation_model: str = None, fallback_model: str = None, 
                      table_column_model: str = None, table_value_model: str = None) -> ScholarQA:
@@ -41,8 +42,27 @@ def setup_scholar_qa(reranker_model: str, llm_model: str = None, decomposer_mode
     # Initialize the retriever with default settings
     retriever = FullTextRetriever(n_retrieval=256, n_keyword_srch=20)
 
-    # Initialize the Qwen reranker
-    reranker = QWENRerankerVLLM(model_name=reranker_model)
+    # Initialize the reranker based on type
+    if reranker_type == "llm":
+        # Use LLM-based reranker
+        reranker = LLMReranker(
+            model=reranker_llm_model or GPT_41_MINI,
+            use_batch=True,
+            max_tokens=10,
+            temperature=0.0
+        )
+    elif reranker_type == "qwen_vllm":
+        # Use QWEN VLLM reranker (default)
+        reranker = QWENRerankerVLLM(model_name=reranker_model)
+    elif reranker_type in RERANKER_MAPPING:
+        # Use other reranker types from mapping
+        reranker_class = RERANKER_MAPPING[reranker_type]
+        if reranker_type == "qwen":
+            reranker = reranker_class(model_name=reranker_model)
+        else:
+            reranker = reranker_class(reranker_model)
+    else:
+        raise ValueError(f"Unknown reranker type: {reranker_type}. Available types: {list(RERANKER_MAPPING.keys())}")
 
     # Initialize the paper finder with the retriever and reranker
     paper_finder = PaperFinderWithReranker(
@@ -85,7 +105,19 @@ def main():
         "--reranker",
         type=str,
         default="Qwen/Qwen3-Reranker-4B", 
-        help="The reranker to use. If you specify '0.6' or '4', it will use 'Qwen/Qwen3-Reranker-0.6B' or 'Qwen/Qwen3-Reranker-4B' respectively. You can also provide a full model string for other rerankers."
+        help="The reranker model to use. If you specify '0.6' or '4', it will use 'Qwen/Qwen3-Reranker-0.6B' or 'Qwen/Qwen3-Reranker-4B' respectively. You can also provide a full model string for other rerankers."
+    )
+    parser.add_argument(
+        "--reranker-type",
+        type=str,
+        default="qwen_vllm",
+        choices=list(RERANKER_MAPPING.keys()) + ["qwen_vllm"],
+        help=f"The type of reranker to use. Available types: {', '.join(list(RERANKER_MAPPING.keys()) + ['qwen_vllm'])}. Use 'llm' for LLM-based reranking."
+    )
+    parser.add_argument(
+        "--reranker-llm-model",
+        type=str,
+        help=f"The LLM model to use for LLM-based reranking (only used when --reranker-type=llm). If not specified, uses GPT_41_MINI."
     )
     parser.add_argument(
         "--model",
@@ -139,6 +171,7 @@ def main():
         ("--fallback-model", args.fallback_model),
         ("--table-column-model", args.table_column_model),
         ("--table-value-model", args.table_value_model),
+        ("--reranker-llm-model", args.reranker_llm_model),
     ]
     
     for arg_name, model in models_to_validate:
@@ -156,7 +189,9 @@ def main():
 
     # Initialize ScholarQA
     scholar_qa = setup_scholar_qa(
-        reranker_model, 
+        reranker_model,
+        args.reranker_type,
+        args.reranker_llm_model,
         args.model, 
         args.decomposer_model,
         args.quote_extraction_model,

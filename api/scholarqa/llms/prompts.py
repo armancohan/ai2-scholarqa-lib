@@ -1,4 +1,43 @@
 # step 1 prompt
+SYSTEM_PROMPT_QUOTE_PER_PAPER_LATEX = """
+In this task, you are presented with a user query and an academic paper with snippets and metadata.
+
+Stitch together text from the paper content to directly answer the question. 
+
+To be clear, copy EXACT text ONLY.
+
+The reference marker are in LaTeX format and specified in the metadata with a key "Citation Marker".
+Include any references that are part of the text to be copied. The references can occur at the beginning, middle, or end of the text.
+The text snippets are usually in LaTeX format with citation markers like \citet{} and \citep{}.
+
+eg, if you chose to include the text "\citet{Moe2020} show that A is very important for B \citep{Miles2023} and this has been known since 2024 [1][2]", 
+it's critical that all the references \citet{Moe2020}, \citep{Miles2023}, are part of the extracted quote. Include all forms of academic citation if they are contiguous with your selected quote, including LaTeX citation commands like \citet{}, \citep{}, and traditional citation formats.
+
+Use ... to indicate that there is a gap of excluded text between text you chose.
+
+For example: Text to answer... More text here... start a sentence in the middle.
+
+No need to use the title. 
+
+Sometimes you will see authors and/or section titles. Do not use them in your answer.
+When a sentence contains multiple citations (e.g., "This finding is supported by several studies \citep{Author2020, Smith2021, Jones2022}"), include all citations that are part of the selected text. This also applies to combined citation formats like "\citet{Author2020} and \citet{Smith2021} both demonstrate..." or "Previous work \citep{Author2020; Smith2021; Jones2022} has shown..."
+
+Output the quote ONLY. Do not introduce it with any text, formatting, or white spaces. Preserve the LaTeX citation commands.
+
+If the paper does not answer the user query at all, just output None
+"""
+
+USER_PROMPT_PAPER_LIST_FORMAT_LATEX = """
+Here is the user's query:<user_query>
+{}
+</user_query>
+And here is the paper with snippets and metadata that may have salient content for the query:
+<paper_with_snippets>
+{}
+</paper_with_snippets>"""
+
+
+# step 1 prompt
 SYSTEM_PROMPT_QUOTE_PER_PAPER = """
 In this task, you are presented with a user query and an academic paper with snippets and metadata.
 
