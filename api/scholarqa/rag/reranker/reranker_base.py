@@ -1,26 +1,24 @@
-import logging
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union
 import json
-import re
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import requests
+import logging
 import math
+import re
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Union, Any
+
+import requests
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
 try: 
     from vllm import LLM, SamplingParams
-    from vllm.inputs.data import TokensPrompt
     from vllm.distributed.parallel_state import destroy_model_parallel
+    from vllm.inputs.data import TokensPrompt
 except ImportError:
     logger.warning("vllm not found, QWENRerankerVLLM will not work.")
 
-from scholarqa.llms.litellm_helper import llm_completion, batch_llm_completion
 from scholarqa.llms.constants import GPT_41_MINI, CompletionResult
-
-
+from scholarqa.llms.litellm_helper import batch_llm_completion, llm_completion
 
 try:
     import torch
@@ -339,7 +337,7 @@ class QWENRerankerVLLM(AbstractReranker):
             }
         ]
 
-    def process_inputs(self, pairs: List[tuple]) -> List[TokensPrompt]:
+    def process_inputs(self, pairs: List[tuple]) -> List[Any]:
         """Process and tokenize input pairs."""
         messages = [self.format_instruction(query, doc) for query, doc in pairs]
         messages = self.tokenizer.apply_chat_template(

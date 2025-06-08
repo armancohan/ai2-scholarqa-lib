@@ -5,10 +5,10 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any, Dict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -101,7 +101,6 @@ async def process_query(message: dict, client_id: str):
         # Load configuration
         config_file = "config_example.json"
         config = load_config(config_file, config_name)
-        import ipdb; ipdb.set_trace()
         if not config and config_name != "llm_reranker":
             await manager.send_message({
                 "type": "error",
