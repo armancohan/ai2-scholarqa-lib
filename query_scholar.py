@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+from datetime import datetime
 
 from scholarqa.config.config_setup import LogsConfig
 from scholarqa.llms.constants import (GPT_4_TURBO, GPT_41, GPT_41_MINI, GPT_4o, 
@@ -124,6 +125,7 @@ def main():
     parser.add_argument("--inline-tags", action="store_true", help="Include inline paper tags in the output")
     parser.add_argument("--config", type=str, default="config.json", help="Path to configuration file (default: config.json)")
     parser.add_argument("--config-name", type=str, default="default", help="Configuration name to use from the config file (default: default)")
+    parser.add_argument("--output-prefix", type=str, help="Optional prefix for the output filename (e.g., 'experiment1' -> 'experiment1_scholar_query_results_...')")
     parser.add_argument(
         "--reranker",
         type=str,
@@ -254,7 +256,19 @@ def main():
         # Process the query
         result = scholar_qa.answer_query(args.query, inline_tags=args.inline_tags, output_format="latex")
 
-        with open("scholar_query_results.txt", "w") as f:
+        # Ensure outputs directory exists
+        os.makedirs("outputs", exist_ok=True)
+        
+        # Generate output filename with timestamp for uniqueness
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if args.output_prefix:
+            # Sanitize prefix to be filename-safe
+            safe_prefix = "".join(c for c in args.output_prefix if c.isalnum() or c in '-_').strip()
+            output_filename = f"outputs/{safe_prefix}_scholar_query_results_{timestamp}.txt"
+        else:
+            output_filename = f"outputs/scholar_query_results_{timestamp}.txt"
+        
+        with open(output_filename, "w") as f:
             # Print the results
             for section in result["sections"]:
                 f.write(f"\n{section['title']}\n")
@@ -295,6 +309,10 @@ def main():
         if "cost" in result:
             print(f"Total LLM Cost: ${result['cost']:.6f}")
             print("=" * 50)
+        
+        # Inform user about output file location
+        print(f"\nResults saved to: {output_filename}")
+        print("=" * 50)
 
     except Exception as e:
         logger.error(f"Error processing query: {e}")

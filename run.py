@@ -33,11 +33,14 @@ def main():
                        choices=["default", "fast", "llm_reranker", "premium"],
                        help="Configuration preset to use")
     parser.add_argument("--inline-tags", action="store_true", help="Include inline paper tags")
+    parser.add_argument("--output-prefix", type=str, help="Optional prefix for the output filename")
     
     args = parser.parse_args()
     
     # Run the query with the specified configuration
-    run_query(args.query, args.config, inline_tags=args.inline_tags if args.inline_tags else None)
+    run_query(args.query, args.config, 
+             inline_tags=args.inline_tags if args.inline_tags else None,
+             output_prefix=args.output_prefix)
 
 if __name__ == "__main__":
     main()
