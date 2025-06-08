@@ -1,0 +1,43 @@
+{
+  "default": {
+    "reranker": "Qwen/Qwen3-Reranker-4B",
+    "reranker_type": "qwen_vllm",
+    "model": "openai/gpt-4.1-mini",
+    "decomposer_model": "openai/gpt-4.1-mini",
+    "quote_extraction_model": "anthropic/claude-3-5-sonnet-20241022",
+    "clustering_model": "openai/gpt-4.1",
+    "summary_generation_model": "anthropic/claude-sonnet-4-20250514",
+    "fallback_model": "openai/gpt-4.1",
+    "table_column_model": "openai/gpt-4.1",
+    "table_value_model": "openai/gpt-4.1"
+  },
+  "fast": {
+    "reranker": "Qwen/Qwen3-Reranker-0.6B",
+    "reranker_type": "qwen_vllm",
+    "model": "openai/gpt-4.1-mini",
+    "decomposer_model": "openai/gpt-4.1-mini",
+    "quote_extraction_model": "openai/gpt-4.1-mini",
+    "clustering_model": "openai/gpt-4.1-mini",
+    "summary_generation_model": "openai/gpt-4.1-mini",
+    "fallback_model": "openai/gpt-4.1-mini"
+  },
+  "llm_reranker": {
+    "reranker_type": "llm",
+    "reranker_llm_model": "openai/gpt-4.1-mini",
+    "model": "openai/gpt-4.1-mini",
+    "clustering_model": "openai/gpt-4.1",
+    "quote_extraction_model": "anthropic/claude-sonnet-4-20250514",
+    "summary_generation_model": "anthropic/claude-sonnet-4-20250514",
+    "fallback_model": "openai/gpt-4.1-mini"
+  },
+  "premium": {
+    "reranker": "Qwen/Qwen3-Reranker-4B",
+    "reranker_type": "qwen_vllm",
+    "model": "anthropic/claude-sonnet-4-20250514",
+    "decomposer_model": "anthropic/claude-3-5-sonnet-20241022",
+    "quote_extraction_model": "anthropic/claude-sonnet-4-20250514",
+    "clustering_model": "anthropic/claude-sonnet-4-20250514",
+    "summary_generation_model": "anthropic/claude-sonnet-4-20250514",
+    "fallback_model": "openai/gpt-4.1"
+  }
+}

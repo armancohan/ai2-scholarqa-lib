@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import logging
+import os
 
 from scholarqa.config.config_setup import LogsConfig
 from scholarqa.llms.constants import (GPT_4_TURBO, GPT_41, GPT_41_MINI, GPT_4o, 
@@ -27,6 +29,25 @@ AVAILABLE_MODELS = {
     CLAUDE_4_SONNET,
     LLAMA_405_TOGETHER_AI,
 }
+
+
+def load_config(config_path: str, config_name: str = "default") -> dict:
+    """Load configuration from JSON file."""
+    if not os.path.exists(config_path):
+        return {}
+    
+    try:
+        with open(config_path, 'r') as f:
+            configs = json.load(f)
+        
+        if config_name in configs:
+            return configs[config_name]
+        else:
+            print(f"Configuration '{config_name}' not found. Available configs: {list(configs.keys())}")
+            return {}
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return {}
 
 
 def setup_scholar_qa(reranker_model: str, reranker_type: str = "qwen_vllm", reranker_llm_model: str = None,
@@ -101,6 +122,8 @@ def main():
     parser = argparse.ArgumentParser(description="Query ScholarQA with a scientific question.")
     parser.add_argument("-q", "--query", required=True, help="The scientific question to ask")
     parser.add_argument("--inline-tags", action="store_true", help="Include inline paper tags in the output")
+    parser.add_argument("--config", type=str, default="config.json", help="Path to configuration file (default: config.json)")
+    parser.add_argument("--config-name", type=str, default="default", help="Configuration name to use from the config file (default: default)")
     parser.add_argument(
         "--reranker",
         type=str,
@@ -160,6 +183,31 @@ def main():
         help=f"The LLM model to use for table value generation. If not specified, uses GPT_41."
     )
     args = parser.parse_args()
+    
+    # Load configuration from file
+    config = load_config(args.config, args.config_name)
+    
+    if config:
+        print(f"Using configuration '{args.config_name}' from {args.config}")
+    
+    # Apply config defaults to args (command line args override config)
+    def apply_config_default(arg_name, config_key=None):
+        config_key = config_key or arg_name
+        if getattr(args, arg_name) is None and config_key in config:
+            setattr(args, arg_name, config[config_key])
+    
+    # Apply configuration defaults
+    apply_config_default('reranker')
+    apply_config_default('reranker_type')
+    apply_config_default('reranker_llm_model')
+    apply_config_default('model')
+    apply_config_default('decomposer_model')
+    apply_config_default('quote_extraction_model')
+    apply_config_default('clustering_model')
+    apply_config_default('summary_generation_model')
+    apply_config_default('fallback_model')
+    apply_config_default('table_column_model')
+    apply_config_default('table_value_model')
     
     # Validate all model arguments if provided
     models_to_validate = [
