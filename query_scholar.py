@@ -29,7 +29,10 @@ AVAILABLE_MODELS = {
 }
 
 
-def setup_scholar_qa(reranker_model: str, llm_model: str = None) -> ScholarQA:
+def setup_scholar_qa(reranker_model: str, llm_model: str = None, decomposer_model: str = None, 
+                     quote_extraction_model: str = None, clustering_model: str = None,
+                     summary_generation_model: str = None, fallback_model: str = None, 
+                     table_column_model: str = None, table_value_model: str = None) -> ScholarQA:
     """Initialize and return a configured ScholarQA instance.
 
     Returns:
@@ -60,6 +63,13 @@ def setup_scholar_qa(reranker_model: str, llm_model: str = None) -> ScholarQA:
         paper_finder=paper_finder,
         logs_config=logs_config,
         llm_model=llm_model,
+        decomposer_llm=decomposer_model,
+        quote_extraction_llm=quote_extraction_model,
+        clustering_llm=clustering_model,
+        summary_generation_llm=summary_generation_model,
+        fallback_llm=fallback_model,
+        table_column_model=table_column_model,
+        table_value_model=table_value_model,
         # Disable table generation for simplicity
         run_table_generation=False,
     )
@@ -80,15 +90,62 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        help=f"The LLM model to use. Available models: {', '.join(sorted(AVAILABLE_MODELS))}. If not specified, uses the default GPT_41_MINI."
+        help=f"The main LLM model to use for quote extraction, clustering, and summary generation. Available models: {', '.join(sorted(AVAILABLE_MODELS))}. If not specified, uses the default GPT_41_MINI."
+    )
+    parser.add_argument(
+        "--decomposer-model",
+        type=str,
+        help=f"The LLM model to use for query decomposition/preprocessing. If not specified, uses the main model."
+    )
+    parser.add_argument(
+        "--quote-extraction-model",
+        type=str,
+        help=f"The LLM model to use for extracting quotes from papers. If not specified, uses the main model."
+    )
+    parser.add_argument(
+        "--clustering-model",
+        type=str,
+        help=f"The LLM model to use for clustering quotes into dimensions. If not specified, uses the main model."
+    )
+    parser.add_argument(
+        "--summary-generation-model",
+        type=str,
+        help=f"The LLM model to use for generating the final summary sections. If not specified, uses the main model."
+    )
+    parser.add_argument(
+        "--fallback-model", 
+        type=str,
+        help=f"The fallback LLM model to use. If not specified, uses GPT_41."
+    )
+    parser.add_argument(
+        "--table-column-model",
+        type=str, 
+        help=f"The LLM model to use for table column generation. If not specified, uses GPT_41."
+    )
+    parser.add_argument(
+        "--table-value-model",
+        type=str,
+        help=f"The LLM model to use for table value generation. If not specified, uses GPT_41."
     )
     args = parser.parse_args()
     
-    # Validate model if provided
-    if args.model and args.model not in AVAILABLE_MODELS:
-        print(f"Error: Model '{args.model}' is not available.")
-        print(f"Available models: {', '.join(sorted(AVAILABLE_MODELS))}")
-        return
+    # Validate all model arguments if provided
+    models_to_validate = [
+        ("--model", args.model),
+        ("--decomposer-model", args.decomposer_model),
+        ("--quote-extraction-model", args.quote_extraction_model),
+        ("--clustering-model", args.clustering_model),
+        ("--summary-generation-model", args.summary_generation_model),
+        ("--fallback-model", args.fallback_model),
+        ("--table-column-model", args.table_column_model),
+        ("--table-value-model", args.table_value_model),
+    ]
+    
+    for arg_name, model in models_to_validate:
+        if model and model not in AVAILABLE_MODELS:
+            print(f"Error: Model '{model}' for {arg_name} is not available.")
+            print(f"Available models: {', '.join(sorted(AVAILABLE_MODELS))}")
+            return
     
     #parse the reranker model
     reranker_model = args.reranker
@@ -98,7 +155,17 @@ def main():
         reranker_model = "Qwen/Qwen3-Reranker-4B"
 
     # Initialize ScholarQA
-    scholar_qa = setup_scholar_qa(reranker_model, args.model)
+    scholar_qa = setup_scholar_qa(
+        reranker_model, 
+        args.model, 
+        args.decomposer_model,
+        args.quote_extraction_model,
+        args.clustering_model,
+        args.summary_generation_model,
+        args.fallback_model,
+        args.table_column_model, 
+        args.table_value_model
+    )
 
     try:
         # Process the query

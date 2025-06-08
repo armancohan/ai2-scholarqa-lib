@@ -47,6 +47,13 @@ class ScholarQA:
             paper_finder: PaperFinder,
             task_id: str = None,
             llm_model: str = None,
+            decomposer_llm: str = None,
+            quote_extraction_llm: str = None,
+            clustering_llm: str = None,
+            summary_generation_llm: str = None,
+            fallback_llm: str = None,
+            table_column_model: str = None,
+            table_value_model: str = None,
             multi_step_pipeline: MultiStepQAPipeline = None,
             state_mgr: AbsStateMgrClient = None,
             logs_config: LogsConfig = None,
@@ -64,17 +71,29 @@ class ScholarQA:
         self.task_id = task_id
         self.paper_finder = paper_finder
         self.llm_model = llm_model or GPT_41_MINI
-        fallback_llm = kwargs.get("fallback_llm", GPT_41)
+        self.fallback_llm = fallback_llm or GPT_41
+        self.decomposer_llm = decomposer_llm or self.llm_model
+        self.quote_extraction_llm = quote_extraction_llm or self.llm_model
+        self.clustering_llm = clustering_llm or self.llm_model
+        self.summary_generation_llm = summary_generation_llm or self.llm_model
+        self.table_column_model = table_column_model or GPT_41
+        self.table_value_model = table_value_model or GPT_41
         self.validate = kwargs.get("validate", "OPENAI_API_KEY" in os.environ)
         if not self.validate:
             logger.warning("Validation of the query for harmful content is turned off")
-        self.decomposer_llm = kwargs.get("decomposer_llm", self.llm_model)
         self.state_mgr = state_mgr if state_mgr else LocalStateMgrClient(self.logs_config.log_dir)
         self.llm_caller = CostAwareLLMCaller(self.state_mgr)
         self.llm_kwargs = llm_kwargs if llm_kwargs else dict()
         if not multi_step_pipeline:
-            logger.info(f"Creating a new MultiStepQAPipeline with model: {llm_model} for all the steps")
-            self.multi_step_pipeline = MultiStepQAPipeline(self.llm_model, fallback_llm=fallback_llm, **self.llm_kwargs)
+            logger.info(f"Creating a new MultiStepQAPipeline with models: quote_extraction={self.quote_extraction_llm}, clustering={self.clustering_llm}, summary_generation={self.summary_generation_llm}")
+            self.multi_step_pipeline = MultiStepQAPipeline(
+                llm_model=self.llm_model,
+                quote_extraction_llm=self.quote_extraction_llm,
+                clustering_llm=self.clustering_llm,
+                summary_generation_llm=self.summary_generation_llm,
+                fallback_llm=self.fallback_llm, 
+                **self.llm_kwargs
+            )
         else:
             self.multi_step_pipeline = multi_step_pipeline
 
@@ -198,7 +217,7 @@ class ScholarQA:
         logger.info(
             f"{scored_df.shape[0]} papers with relevance_judgement >= {self.paper_finder.context_threshold} to start with.")
         start = time()
-        cost_args = cost_args._replace(model=self.multi_step_pipeline.llm_model)._replace(
+        cost_args = cost_args._replace(model=self.quote_extraction_llm)._replace(
             description="Corpus QA Step 1: Quote extraction")
         per_paper_summaries = self.llm_caller.call_method(cost_args, self.multi_step_pipeline.step_select_quotes,
                                                           query=query, scored_df=scored_df,
@@ -219,7 +238,7 @@ class ScholarQA:
         logger.info("Running Step 2: Clustering the extracted quotes into meaningful dimensions")
         self.update_task_state("Synthesizing an answer outline based on extracted quotes", step_estimated_time=15)
         start = time()
-        cost_args = cost_args._replace(model=self.multi_step_pipeline.llm_model)._replace(
+        cost_args = cost_args._replace(model=self.clustering_llm)._replace(
             description="Corpus QA Step 2: Clustering quotes into dimensions")
         cluster_json = self.llm_caller.call_method(cost_args, self.multi_step_pipeline.step_clustering,
                                                    query=query, per_paper_summaries=per_paper_summaries,
@@ -235,7 +254,7 @@ class ScholarQA:
         logger.info("Running Step 3: Assemble the summary with the links (takes ~2 mins)")
         start = time()
 
-        cost_args = cost_args._replace(model=self.multi_step_pipeline.llm_model)._replace(
+        cost_args = cost_args._replace(model=self.summary_generation_llm)._replace(
             description="Corpus QA Step 3: Generating summarized answer")
         sec_generator = self.llm_caller.call_iter_method(cost_args, self.multi_step_pipeline.generate_iterative_summary,
                                                          query=query, per_paper_summaries_extd=per_paper_summaries,
@@ -472,8 +491,8 @@ class ScholarQA:
             "query": query,
             "section_title": dim["name"],
             "cit_ids": cit_ids,
-            "column_model": GPT_41,
-            "value_model": GPT_41,
+            "column_model": self.table_column_model,
+            "value_model": self.table_value_model,
         }
         tthread = Thread(target=call_table_generator, args=(dim["idx"], payload,))
         tthread.start()
@@ -598,7 +617,7 @@ class ScholarQA:
                         curr_response=generated_sections, step_estimated_time=15)
                 section_text = next(gen_iter)
                 section_json = \
-                    get_json_summary(self.multi_step_pipeline.llm_model, [section_text], per_paper_summaries_extd,
+                    get_json_summary(self.summary_generation_llm, [section_text], per_paper_summaries_extd,
                                      paper_metadata,
                                      citation_ids, inline_tags, output_format)[0]
                 section_json["format"] = cluster_json.result["dimensions"][idx]["format"]

@@ -43,9 +43,15 @@ class ClusterPlan(BaseModel):
 
 
 class MultiStepQAPipeline:
-    def __init__(self, llm_model: str, fallback_llm: str = GPT_41, batch_workers: int = 20,
+    def __init__(self, llm_model: str = None, quote_extraction_llm: str = None, 
+                 clustering_llm: str = None, summary_generation_llm: str = None,
+                 fallback_llm: str = GPT_41, batch_workers: int = 20,
                  **llm_kwargs):
-        self.llm_model = llm_model
+        # Use llm_model as default for all steps if specific models not provided
+        self.llm_model = llm_model or GPT_41  # For backward compatibility
+        self.quote_extraction_llm = quote_extraction_llm or self.llm_model
+        self.clustering_llm = clustering_llm or self.llm_model
+        self.summary_generation_llm = summary_generation_llm or self.llm_model
         self.fallback_llm = fallback_llm
         self.batch_workers = batch_workers
         self.llm_kwargs = {"max_tokens": 4096*4}
@@ -59,7 +65,7 @@ class MultiStepQAPipeline:
         Extracts relevant quotes from a list of papers for a given query.
         """
         logger.info(
-            f"Querying {self.llm_model} to extract quotes from {len(scored_df)} papers "
+            f"Querying {self.quote_extraction_llm} to extract quotes from {len(scored_df)} papers "
             f"with {self.batch_workers} parallel workers."
         )
 
@@ -70,7 +76,7 @@ class MultiStepQAPipeline:
 
         # Get quote extractions from the LLM.
         completion_results = batch_llm_completion(
-            self.llm_model,
+            self.quote_extraction_llm,
             messages=messages,
             system_prompt=sys_prompt,
             max_workers=self.batch_workers,
@@ -119,12 +125,12 @@ class MultiStepQAPipeline:
         try:
             #params for reasoning mode: max_completion_tokens=4096, max_tokens=4096+1024, reasoning_effort="low"
             response = llm_completion(user_prompt=user_prompt,
-                                      system_prompt=sys_prompt, fallback=self.fallback_llm, model=self.llm_model,
+                                      system_prompt=sys_prompt, fallback=self.fallback_llm, model=self.clustering_llm,
                                       response_format= ClusterPlan, **self.llm_kwargs
                                       )
             return json.loads(response.content), response
         except Exception as e:
-            logger.warning(f"Error while clustering with {self.llm_model}: {e}")
+            logger.warning(f"Error while clustering with {self.clustering_llm}: {e}")
             raise e
 
     def generate_iterative_summary(self, query: str, per_paper_summaries_extd: Dict[str, Dict[str, Any]],
@@ -167,7 +173,7 @@ class MultiStepQAPipeline:
                 logger.warning(f"No quotes for section {section_name}")
                 filled_in_prompt = PROMPT_ASSEMBLE_NO_QUOTES_SUMMARY.format(**fill_in_prompt_args)
 
-            response = llm_completion(user_prompt=filled_in_prompt, model=self.llm_model, fallback=self.fallback_llm,
+            response = llm_completion(user_prompt=filled_in_prompt, model=self.summary_generation_llm, fallback=self.fallback_llm,
                                       **self.llm_kwargs)
             existing_sections.append(response.content)
             yield response
