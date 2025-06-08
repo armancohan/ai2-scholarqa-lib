@@ -1,6 +1,8 @@
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union
+import json
+import re
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import requests
@@ -8,6 +10,9 @@ import math
 from vllm import LLM, SamplingParams
 from vllm.inputs.data import TokensPrompt
 from vllm.distributed.parallel_state import destroy_model_parallel
+
+from scholarqa.llms.litellm_helper import llm_completion, batch_llm_completion
+from scholarqa.llms.constants import GPT_41_MINI, CompletionResult
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +394,153 @@ class QWENRerankerVLLM(AbstractReranker):
             destroy_model_parallel()
 
 
+class LLMReranker(AbstractReranker):
+    """LLM-based reranker that uses litellm calls to judge document relevance."""
+
+    def __init__(
+        self,
+        model: str = GPT_41_MINI,
+        fallback_model: str = None,
+        use_batch: bool = True,
+        max_tokens: int = 10,
+        temperature: float = 0.0,
+        **llm_kwargs
+    ):
+        """Initialize the LLM reranker.
+
+        Args:
+            model: The LLM model to use for relevance scoring
+            fallback_model: Fallback model if the primary model fails
+            use_batch: Whether to use batch processing for multiple documents
+            max_tokens: Maximum tokens for the LLM response
+            temperature: Temperature for LLM generation (0.0 for deterministic)
+            **llm_kwargs: Additional arguments passed to the LLM
+        """
+        self.model = model
+        self.fallback_model = fallback_model
+        self.use_batch = use_batch
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.llm_kwargs = {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            **llm_kwargs
+        }
+
+        # System prompt for relevance scoring
+        self.system_prompt = """You are an reserach scientist and expert at judging the relevance of scientific papers to research queries. Your task is to evaluate whether a scientific paper (abstract or paper snippets) addresses the given research query and provide a relevance score.
+
+Instructions:
+1. Read the research query and scientific paper content carefully
+2. Judge how well the paper addresses the specific research query
+3. Consider the following scoring criteria:
+   - SURVEY PAPERS: Score very low (1-2) as they are typically not relevant for specific research questions
+   - REVIEW PAPERS: Score low (2-3) unless they directly address the specific query)
+   - EMPIRICAL STUDIES: Score higher if they present novel findings, methods, results, findings, or related to the query
+   - METHODOLOGICAL PAPERS: Score high if they introduce techniques, algorithms, or approaches relevant to the query
+
+4. Respond with ONLY a single integer between 0 and 10, where:
+   - 0-2 = irrelevant papers that don't address the specific query
+   - 3-4 = low relevance (mentions related concepts but doesn't directly address the query)
+   - 5-6 = moderate relevance (partially addresses the query with some relevant findings)
+   - 7-8 = high relevance (directly addresses the query with relevant methods/results)
+   - 9-10 = perfect relevance (specifically focused on the query topic with novel contributions)
+
+Respond with ONLY the numerical score (e.g., "7"). Do not include any explanation or additional text."""
+
+    def format_prompt(self, query: str, document: str) -> str:
+        """Format the prompt for relevance scoring."""
+        return f"""Research Query: {query}
+
+Scientific Paper Content: {document}
+
+Relevance Score:"""
+
+    def parse_score(self, response: str) -> float:
+        """Parse the LLM response to extract the relevance score (0-10) and normalize to 0.0-1.0."""
+        try:
+            # Remove any whitespace and try to extract a number
+            response = response.strip()
+            
+            # Look for an integer or decimal number
+            score_match = re.search(r'(\d*\.?\d+)', response)
+            if score_match:
+                raw_score = float(score_match.group(1))
+                # Clamp score between 0 and 10
+                raw_score = max(0.0, min(10.0, raw_score))
+                # Normalize to 0.0-1.0 scale for compatibility with existing interface
+                normalized_score = raw_score / 10.0
+                return normalized_score
+            else:
+                logger.warning(f"Could not parse score from response: '{response}', defaulting to 0.0")
+                return 0.0
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Error parsing score from response: '{response}', error: {e}, defaulting to 0.0")
+            return 0.0
+
+    def score_single_document(self, query: str, document: str) -> float:
+        """Score a single document against the query."""
+        user_prompt = self.format_prompt(query, document)
+        
+        try:
+            result = llm_completion(
+                user_prompt=user_prompt,
+                system_prompt=self.system_prompt,
+                model=self.model,
+                fallback=self.fallback_model,
+                **self.llm_kwargs
+            )
+            score = self.parse_score(result.content)
+            # Extract raw score for logging
+            raw_score_match = re.search(r'(\d*\.?\d+)', result.content.strip())
+            raw_score = float(raw_score_match.group(1)) if raw_score_match else 0
+            logger.debug(f"Scored document (raw: {raw_score}/10, normalized: {score:.3f}): {document[:100]}...")
+            return score
+        except Exception as e:
+            logger.error(f"Error scoring document: {e}")
+            return 0.0
+
+    def score_batch_documents(self, query: str, documents: List[str]) -> List[float]:
+        """Score multiple documents against the query using batch processing."""
+        user_prompts = [self.format_prompt(query, doc) for doc in documents]
+        
+        try:
+            results = batch_llm_completion(
+                messages=user_prompts,
+                system_prompt=self.system_prompt,
+                model=self.model,
+                fallback=self.fallback_model,
+                **self.llm_kwargs
+            )
+            scores = [self.parse_score(result.content) for result in results]
+            logger.debug(f"Batch scored {len(documents)} documents")
+            return scores
+        except Exception as e:
+            logger.error(f"Error in batch scoring: {e}, falling back to individual scoring")
+            # Fallback to individual scoring
+            return [self.score_single_document(query, doc) for doc in documents]
+
+    def get_scores(self, query: str, documents: List[str]) -> List[float]:
+        """Get relevance scores for a query against a list of documents.
+
+        Args:
+            query: The search query
+            documents: List of documents to score against the query
+
+        Returns:
+            List of relevance scores (0.0 to 1.0) for each document
+        """
+        if not documents:
+            return []
+
+        logger.info(f"Scoring {len(documents)} documents against query using {self.model}")
+        
+        if self.use_batch and len(documents) > 1:
+            return self.score_batch_documents(query, documents)
+        else:
+            return [self.score_single_document(query, doc) for doc in documents]
+
+
 RERANKER_MAPPING = {
     "crossencoder": CrossEncoderScores,
     "biencoder": BiEncoderScores,
@@ -396,6 +548,7 @@ RERANKER_MAPPING = {
     "qwen": QWENReranker,
     "qwen_openai": QWENRerankerOpenAI,
     "qwen_vllm": QWENRerankerVLLM,
+    "llm": LLMReranker,
 }
 
 def test_qwen_reranker_openai():
@@ -489,6 +642,70 @@ def test_qwen_reranker_vllm():
         print(f"Error during testing: {str(e)}")
 
 
+def test_llm_reranker():
+    """Test function to demonstrate LLMReranker usage."""
+    # Initialize the reranker
+    reranker = LLMReranker(
+        model=GPT_41_MINI,
+        use_batch=True,
+        max_tokens=10,
+        temperature=0.0
+    )
+
+    # Test query and documents
+    query = "What are the recent advances in transformer-based language models for scientific text understanding?"
+    
+    documents = [
+        # Highly relevant empirical study (should score 8-9/10 → 0.8-0.9 normalized)
+        "We present SciBERT, a pre-trained language representation model for scientific text based on BERT. Our model is trained on a large corpus of scientific publications and achieves state-of-the-art performance on scientific NLP tasks including named entity recognition, relation extraction, and text classification. Experimental results show 15% improvement over BERT-base on biomedical NER and 12% on computer science paper classification.",
+        
+        # Survey paper (should score 1-2/10 → 0.1-0.2 normalized)
+        "This survey provides a comprehensive overview of transformer-based language models in scientific text processing. We review 150+ papers published between 2018-2023, categorizing approaches into domain adaptation, pre-training strategies, and downstream applications. We identify key trends and future research directions in scientific NLP.",
+        
+        # Methodological paper with novel approach (should score 8-9/10 → 0.8-0.9 normalized)
+        "We introduce SciT5, a novel transformer architecture specifically designed for scientific text understanding. Our method incorporates domain-specific pre-training objectives including citation prediction and section classification. SciT5 achieves 95% accuracy on scientific relation extraction and outperforms previous models by 18% on scientific question answering benchmarks.",
+        
+        # Historical/background paper (should score 2-3/10 → 0.2-0.3 normalized)
+        "The evolution of natural language processing in scientific domains traces back to early rule-based systems in the 1970s. This paper provides historical context for current transformer-based approaches, discussing the progression from statistical methods through early neural networks to modern attention mechanisms.",
+        
+        # Review paper with some relevance (should score 2-3/10 → 0.2-0.3 normalized)
+        "Recent reviews of transformer architectures highlight their success across multiple domains. This review paper examines 200+ transformer variants, analyzing their architectural innovations and performance across tasks. While transformers show promise in scientific text, most work focuses on general domain applications.",
+        
+        # Highly relevant case study (should score 7-8/10 → 0.7-0.8 normalized)
+        "We evaluate transformer-based models on PubMed abstract classification, comparing BERT, SciBERT, and domain-specific variants. Our experiments on 100K biomedical abstracts show that scientific domain pre-training improves classification accuracy by 23%. We provide detailed analysis of model performance across different medical specialties."
+    ]
+
+    # Get scores
+    try:
+        scores = reranker.get_scores(query, documents)
+        
+        # Print results
+        print("\nLLM Reranker Test Results")
+        print("=" * 80)
+        print("Query:", query)
+        print("\nResults:")
+        print("-" * 80)
+        for i, (doc, score) in enumerate(zip(documents, scores)):
+            raw_score = score * 10  # Convert back to 0-10 for display
+            print(f"Document {i+1} - Score: {raw_score:.1f}/10 (normalized: {score:.3f})")
+            print(f"Content: {doc[:150]}...")
+            print("-" * 80)
+            
+        # Show sorted results
+        sorted_results = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+        print("\nRanked Results (by relevance score):")
+        print("=" * 80)
+        for i, (doc, score) in enumerate(sorted_results):
+            raw_score = score * 10  # Convert back to 0-10 for display
+            print(f"Rank {i+1} - Score: {raw_score:.1f}/10 (normalized: {score:.3f})")
+            print(f"Content: {doc[:100]}...")
+            print("-" * 40)
+            
+    except Exception as e:
+        print(f"Error during testing: {str(e)}")
+
+
 if __name__ == "__main__":
-    test_qwen_reranker_openai()
-    test_qwen_reranker_vllm()
+    test_llm_reranker()
+    # test_qwen_reranker_openai()
+    # test_qwen_reranker_vllm()
