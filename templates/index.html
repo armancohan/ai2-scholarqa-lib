@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScholarQA - AI Research Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'Courier New', monospace;
+            background: #0a0a0a;
+            color: #00ff00;
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #888;
+            font-size: 1.1em;
+        }
+
+        .form-section {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0, 255, 0, 0.1);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            background: #000;
+            border: 2px solid #333;
+            border-radius: 4px;
+            color: #00ff00;
+            font-family: inherit;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #00ff00;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 120px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #006600, #00aa00);
+            color: #fff;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn:hover {
+            background: linear-gradient(45deg, #00aa00, #00ff00);
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .progress-section {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            display: none;
+        }
+
+        .progress-bar {
+            background: #333;
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #00ff00, #00aa00);
+            height: 100%;
+            width: 0%;
+            transition: width 0.5s ease;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+
+        .status-text {
+            color: #00ff00;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .step-indicator {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .results-section {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 25px;
+            display: none;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 15px;
+        }
+
+        .results-title {
+            color: #00ff00;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .cost-info {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .results-content {
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 20px;
+            max-height: 600px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-family: inherit;
+            color: #00ff00;
+            line-height: 1.4;
+        }
+
+        .error-section {
+            background: #2a0a0a;
+            border: 1px solid #aa0000;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+            display: none;
+        }
+
+        .error-title {
+            color: #ff4444;
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .error-message {
+            color: #ff8888;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #000;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* Terminal-like blinking cursor effect */
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .cursor {
+            animation: blink 1s infinite;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .form-section, .progress-section, .results-section, .error-section {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>ScholarQA</h1>
+            <p>AI-Powered Research Assistant for Scientific Literature</p>
+        </header>
+
+        <form id="queryForm" class="form-section">
+            <div class="form-group">
+                <label for="query">Research Question:</label>
+                <textarea 
+                    id="query" 
+                    name="query" 
+                    placeholder="Enter your scientific research question here..."
+                    required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="config">Configuration:</label>
+                <select id="config" name="config">
+                    {% for config_name in config_names %}
+                    <option value="{{ config_name }}">{{ config_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="inlineTags" name="inlineTags">
+                    <label for="inlineTags">Include inline paper tags</label>
+                </div>
+            </div>
+
+            <button type="submit" class="btn" id="submitBtn">
+                Execute Query
+            </button>
+        </form>
+
+        <div id="progressSection" class="progress-section">
+            <div class="status-text" id="statusText">Initializing...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="step-indicator" id="stepIndicator">Step 1 of 5</div>
+        </div>
+
+        <div id="errorSection" class="error-section">
+            <div class="error-title">Error</div>
+            <div class="error-message" id="errorMessage"></div>
+        </div>
+
+        <div id="resultsSection" class="results-section">
+            <div class="results-header">
+                <div class="results-title">Results</div>
+                <div class="cost-info" id="costInfo"></div>
+            </div>
+            <div class="results-content" id="resultsContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let clientId = null;
+
+        const form = document.getElementById('queryForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const progressSection = document.getElementById('progressSection');
+        const resultsSection = document.getElementById('resultsSection');
+        const errorSection = document.getElementById('errorSection');
+        const statusText = document.getElementById('statusText');
+        const progressFill = document.getElementById('progressFill');
+        const stepIndicator = document.getElementById('stepIndicator');
+        const resultsContent = document.getElementById('resultsContent');
+        const costInfo = document.getElementById('costInfo');
+        const errorMessage = document.getElementById('errorMessage');
+
+        const steps = {
+            'initializing': { text: 'Initializing system...', progress: 10, step: '1 of 5' },
+            'config_loaded': { text: 'Configuration loaded', progress: 20, step: '2 of 5' },
+            'setup_models': { text: 'Setting up AI models...', progress: 30, step: '3 of 5' },
+            'processing': { text: 'Processing query (this may take several minutes)...', progress: 50, step: '4 of 5' },
+            'formatting': { text: 'Formatting results...', progress: 90, step: '5 of 5' }
+        };
+
+        function generateClientId() {
+            return 'client-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function connectWebSocket() {
+            clientId = generateClientId();
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/${clientId}`;
+            
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = function(event) {
+                console.log('WebSocket connected');
+            };
+
+            socket.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+
+            socket.onclose = function(event) {
+                console.log('WebSocket disconnected');
+                // Attempt to reconnect after 3 seconds if not intentionally closed
+                if (!event.wasClean) {
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                showError('Connection error. Please refresh the page and try again.');
+            };
+        }
+
+        function handleWebSocketMessage(message) {
+            switch (message.type) {
+                case 'status':
+                    updateProgress(message.step, message.message);
+                    break;
+                case 'complete':
+                    showResults(message.result, message.cost, message.output_file);
+                    break;
+                case 'error':
+                    showError(message.message);
+                    break;
+            }
+        }
+
+        function updateProgress(step, message) {
+            const stepInfo = steps[step];
+            if (stepInfo) {
+                statusText.textContent = stepInfo.text;
+                progressFill.style.width = stepInfo.progress + '%';
+                stepIndicator.textContent = stepInfo.step;
+            } else {
+                statusText.textContent = message;
+            }
+        }
+
+        function showResults(result, cost, outputFile) {
+            progressSection.style.display = 'none';
+            errorSection.style.display = 'none';
+            resultsSection.style.display = 'block';
+            
+            resultsContent.textContent = result;
+            if (cost !== undefined) {
+                costInfo.textContent = `Total Cost: $${cost.toFixed(6)}`;
+            }
+            
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Execute Query';
+            
+            // Scroll to results
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showError(message) {
+            progressSection.style.display = 'none';
+            resultsSection.style.display = 'none';
+            errorSection.style.display = 'block';
+            
+            errorMessage.textContent = message;
+            
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Execute Query';
+        }
+
+        function hideAllSections() {
+            progressSection.style.display = 'none';
+            resultsSection.style.display = 'none';
+            errorSection.style.display = 'none';
+        }
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const query = document.getElementById('query').value.trim();
+            if (!query) {
+                alert('Please enter a research question.');
+                return;
+            }
+
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                showError('Connection not established. Please refresh the page and try again.');
+                return;
+            }
+
+            // Update UI
+            hideAllSections();
+            progressSection.style.display = 'block';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing...';
+            
+            // Reset progress
+            progressFill.style.width = '0%';
+            statusText.textContent = 'Initializing...';
+            stepIndicator.textContent = 'Step 1 of 5';
+
+            // Send query
+            const message = {
+                type: 'query',
+                query: query,
+                config_name: document.getElementById('config').value,
+                inline_tags: document.getElementById('inlineTags').checked
+            };
+
+            socket.send(JSON.stringify(message));
+        });
+
+        // Initialize WebSocket connection when page loads
+        window.addEventListener('load', function() {
+            connectWebSocket();
+        });
+
+        // Add some terminal-like effects
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add cursor effect to headers
+            const headers = document.querySelectorAll('h1');
+            headers.forEach(header => {
+                header.innerHTML += '<span class="cursor">_</span>';
+            });
+        });
+    </script>
+</body>
+</html>
