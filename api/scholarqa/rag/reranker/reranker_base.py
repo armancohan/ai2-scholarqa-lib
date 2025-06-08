@@ -7,14 +7,20 @@ import re
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import requests
 import math
-from vllm import LLM, SamplingParams
-from vllm.inputs.data import TokensPrompt
-from vllm.distributed.parallel_state import destroy_model_parallel
+
+logger = logging.getLogger(__name__)
+
+try: 
+    from vllm import LLM, SamplingParams
+    from vllm.inputs.data import TokensPrompt
+    from vllm.distributed.parallel_state import destroy_model_parallel
+except ImportError:
+    logger.warning("vllm not found, QWENRerankerVLLM will not work.")
 
 from scholarqa.llms.litellm_helper import llm_completion, batch_llm_completion
 from scholarqa.llms.constants import GPT_41_MINI, CompletionResult
 
-logger = logging.getLogger(__name__)
+
 
 try:
     import torch
