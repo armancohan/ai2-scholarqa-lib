@@ -123,19 +123,17 @@ def main():
     parser = argparse.ArgumentParser(description="Query ScholarQA with a scientific question.")
     parser.add_argument("-q", "--query", required=True, help="The scientific question to ask")
     parser.add_argument("--inline-tags", action="store_true", help="Include inline paper tags in the output")
-    parser.add_argument("--config", type=str, default="config.json", help="Path to configuration file (default: config.json)")
+    parser.add_argument("--config-file", type=str, default="config.json", help="Path to configuration file (default: config.json)")
     parser.add_argument("--config-name", type=str, default="default", help="Configuration name to use from the config file (default: default)")
     parser.add_argument("--output-prefix", type=str, help="Optional prefix for the output filename (e.g., 'experiment1' -> 'experiment1_scholar_query_results_...')")
     parser.add_argument(
         "--reranker",
         type=str,
-        default="Qwen/Qwen3-Reranker-4B", 
         help="The reranker model to use. If you specify '0.6' or '4', it will use 'Qwen/Qwen3-Reranker-0.6B' or 'Qwen/Qwen3-Reranker-4B' respectively. You can also provide a full model string for other rerankers."
     )
     parser.add_argument(
         "--reranker-type",
         type=str,
-        default="qwen_vllm",
         choices=list(RERANKER_MAPPING.keys()) + ["qwen_vllm"],
         help=f"The type of reranker to use. Available types: {', '.join(list(RERANKER_MAPPING.keys()) + ['qwen_vllm'])}. Use 'llm' for LLM-based reranking."
     )
@@ -187,20 +185,23 @@ def main():
     args = parser.parse_args()
     
     # Load configuration from file
-    config = load_config(args.config, args.config_name)
+    config = load_config(args.config_file, args.config_name)
     
     if config:
-        print(f"Using configuration '{args.config_name}' from {args.config}")
+        print(f"Using configuration '{args.config_name}' from {args.config_file}")
     
     # Apply config defaults to args (command line args override config)
-    def apply_config_default(arg_name, config_key=None):
+    def apply_config_default(arg_name, config_key=None, fallback_default=None):
         config_key = config_key or arg_name
-        if getattr(args, arg_name) is None and config_key in config:
-            setattr(args, arg_name, config[config_key])
+        if getattr(args, arg_name) is None:
+            if config_key in config:
+                setattr(args, arg_name, config[config_key])
+            elif fallback_default is not None:
+                setattr(args, arg_name, fallback_default)
     
-    # Apply configuration defaults
-    apply_config_default('reranker')
-    apply_config_default('reranker_type')
+    # Apply configuration defaults with fallbacks
+    apply_config_default('reranker', fallback_default="Qwen/Qwen3-Reranker-4B")
+    apply_config_default('reranker_type', fallback_default="qwen_vllm")
     apply_config_default('reranker_llm_model')
     apply_config_default('model')
     apply_config_default('decomposer_model')
@@ -229,14 +230,12 @@ def main():
             print(f"Error: Model '{model}' for {arg_name} is not available.")
             print(f"Available models: {', '.join(sorted(AVAILABLE_MODELS))}")
             return
-    
-    #parse the reranker model
+    # Parse the reranker model
     reranker_model = args.reranker
     if reranker_model == "0.6":
         reranker_model = "Qwen/Qwen3-Reranker-0.6B"
     elif reranker_model == "4":
         reranker_model = "Qwen/Qwen3-Reranker-4B"
-
     # Initialize ScholarQA
     scholar_qa = setup_scholar_qa(
         reranker_model,

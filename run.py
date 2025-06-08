@@ -7,13 +7,16 @@ import subprocess
 import sys
 import argparse
 
-def run_query(query, config="default", **kwargs):
+def run_query(query, config_file="default", config_name="default", **kwargs):
     """Run a ScholarQA query with the specified configuration."""
     cmd = [
         sys.executable, "query_scholar.py",
         "-q", query,
-        "--config-name", config
+        "--config-file", config_file,
+        "--config-name", config_name
     ]
+
+    print(f"Running the command: {cmd}")
     
     # Add any additional arguments
     for key, value in kwargs.items():
@@ -29,7 +32,8 @@ def run_query(query, config="default", **kwargs):
 def main():
     parser = argparse.ArgumentParser(description="Run ScholarQA with predefined configurations")
     parser.add_argument("-q", "--query", required=True, help="The scientific question to ask")
-    parser.add_argument("-c", "--config", default="default", 
+    parser.add_argument("-c", "--config-file")
+    parser.add_argument("-n", "--config-name", default="default", 
                        choices=["default", "fast", "llm_reranker", "premium"],
                        help="Configuration preset to use")
     parser.add_argument("--inline-tags", action="store_true", help="Include inline paper tags")
@@ -38,7 +42,7 @@ def main():
     args = parser.parse_args()
     
     # Run the query with the specified configuration
-    run_query(args.query, args.config, 
+    run_query(args.query, args.config_file, args.config_name, 
              inline_tags=args.inline_tags if args.inline_tags else None,
              output_prefix=args.output_prefix)
 
