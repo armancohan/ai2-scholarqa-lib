@@ -5,6 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ScholarQA - AI Research Assistant</title>
     <style>
+        :root {
+            /* Solarized Light */
+            --bg-base: #fdf6e3;
+            --bg-highlight: #eee8d5;
+            --bg-secondary: #fffbf0;
+            --content-primary: #586e75;
+            --content-secondary: #657b83;
+            --content-emphasis: #073642;
+            --accent-primary: #268bd2;
+            --accent-secondary: #2aa198;
+            --accent-success: #859900;
+            --accent-warning: #b58900;
+            --accent-error: #dc322f;
+            --accent-purple: #6c71c4;
+            --accent-orange: #cb4b16;
+            --border-color: #93a1a1;
+            --border-light: #eee8d5;
+            --shadow-color: rgba(88, 110, 117, 0.1);
+        }
+
+        [data-theme="dark"] {
+            /* Solarized Dark */
+            --bg-base: #002b36;
+            --bg-highlight: #073642;
+            --bg-secondary: #094050;
+            --content-primary: #839496;
+            --content-secondary: #93a1a1;
+            --content-emphasis: #fdf6e3;
+            --accent-primary: #268bd2;
+            --accent-secondary: #2aa198;
+            --accent-success: #859900;
+            --accent-warning: #b58900;
+            --accent-error: #dc322f;
+            --accent-purple: #6c71c4;
+            --accent-orange: #cb4b16;
+            --border-color: #586e75;
+            --border-light: #073642;
+            --shadow-color: rgba(0, 0, 0, 0.3);
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,11 +52,12 @@
         }
 
         body {
-            font-family: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'Courier New', monospace;
-            background: #0a0a0a;
-            color: #00ff00;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: var(--bg-base);
+            color: var(--content-primary);
             min-height: 100vh;
             line-height: 1.6;
+            transition: all 0.3s ease;
         }
 
         .container {
@@ -28,29 +69,54 @@
         .header {
             text-align: center;
             margin-bottom: 40px;
-            border-bottom: 2px solid #333;
-            padding-bottom: 20px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 40px 20px;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            border: 1px solid var(--border-light);
+            position: relative;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--accent-primary);
+            color: var(--bg-base);
+            border: none;
+            border-radius: 20px;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .theme-toggle:hover {
+            background: var(--accent-secondary);
+            transform: translateY(-1px);
         }
 
         .header h1 {
-            font-size: 2.5em;
-            color: #00ff00;
-            text-shadow: 0 0 10px #00ff00;
+            font-size: 3em;
+            color: var(--content-emphasis);
             margin-bottom: 10px;
+            font-weight: 700;
         }
 
         .header p {
-            color: #888;
-            font-size: 1.1em;
+            color: var(--content-secondary);
+            font-size: 1.2em;
+            font-weight: 500;
         }
 
         .form-section {
-            background: #111;
-            border: 1px solid #333;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
             border-radius: 8px;
-            padding: 25px;
+            padding: 35px;
             margin-bottom: 30px;
-            box-shadow: 0 4px 15px rgba(0, 255, 0, 0.1);
+            box-shadow: 0 2px 8px var(--shadow-color);
         }
 
         .form-group {
@@ -60,26 +126,28 @@
         label {
             display: block;
             margin-bottom: 8px;
-            color: #00ff00;
-            font-weight: bold;
+            color: var(--content-emphasis);
+            font-weight: 600;
+            font-size: 14px;
         }
 
         input, select, textarea {
             width: 100%;
-            padding: 12px;
-            background: #000;
-            border: 2px solid #333;
+            padding: 12px 16px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
             border-radius: 4px;
-            color: #00ff00;
+            color: var(--content-primary);
             font-family: inherit;
             font-size: 14px;
-            transition: border-color 0.3s ease;
+            transition: all 0.3s ease;
         }
 
         input:focus, select:focus, textarea:focus {
             outline: none;
-            border-color: #00ff00;
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px rgba(38, 139, 210, 0.2);
+            background: var(--bg-highlight);
         }
 
         textarea {
@@ -99,76 +167,76 @@
         }
 
         .btn {
-            background: linear-gradient(45deg, #006600, #00aa00);
-            color: #fff;
+            background: var(--accent-primary);
+            color: var(--bg-base);
             border: none;
-            padding: 15px 30px;
+            padding: 12px 24px;
             border-radius: 4px;
             cursor: pointer;
             font-family: inherit;
             font-size: 16px;
-            font-weight: bold;
+            font-weight: 600;
             transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 1px;
         }
 
         .btn:hover {
-            background: linear-gradient(45deg, #00aa00, #00ff00);
-            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
-            transform: translateY(-2px);
+            background: var(--accent-secondary);
+            transform: translateY(-1px);
         }
 
         .btn:disabled {
-            background: #333;
-            color: #666;
+            background: var(--border-color);
+            color: var(--content-secondary);
             cursor: not-allowed;
             transform: none;
-            box-shadow: none;
         }
 
         .progress-section {
-            background: #111;
-            border: 1px solid #333;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
             border-radius: 8px;
-            padding: 25px;
+            padding: 35px;
             margin-bottom: 30px;
             display: none;
+            box-shadow: 0 2px 8px var(--shadow-color);
         }
 
         .progress-bar {
-            background: #333;
+            background: var(--bg-highlight);
             height: 6px;
             border-radius: 3px;
             overflow: hidden;
-            margin: 15px 0;
+            margin: 20px 0;
+            border: 1px solid var(--border-light);
         }
 
         .progress-fill {
-            background: linear-gradient(90deg, #00ff00, #00aa00);
+            background: var(--accent-success);
             height: 100%;
             width: 0%;
             transition: width 0.5s ease;
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
         }
 
         .status-text {
-            color: #00ff00;
+            color: var(--content-emphasis);
             margin-bottom: 10px;
-            font-weight: bold;
+            font-weight: 600;
+            font-size: 16px;
         }
 
         .step-indicator {
-            color: #888;
-            font-size: 0.9em;
+            color: var(--content-secondary);
+            font-size: 14px;
+            font-weight: 500;
         }
 
         .results-section {
-            background: #111;
-            border: 1px solid #333;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
             border-radius: 8px;
-            padding: 25px;
+            padding: 35px;
             display: none;
+            box-shadow: 0 2px 8px var(--shadow-color);
         }
 
         .results-header {
@@ -176,52 +244,56 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--border-color);
             padding-bottom: 15px;
         }
 
         .results-title {
-            color: #00ff00;
+            color: var(--content-emphasis);
             font-size: 1.5em;
-            font-weight: bold;
+            font-weight: 700;
         }
 
         .cost-info {
-            color: #888;
+            color: var(--content-secondary);
             font-size: 0.9em;
+            font-weight: 500;
         }
 
         .results-content {
-            background: #000;
-            border: 1px solid #333;
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
             border-radius: 4px;
             padding: 20px;
             max-height: 600px;
             overflow-y: auto;
             white-space: pre-wrap;
-            font-family: inherit;
-            color: #00ff00;
-            line-height: 1.4;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', monospace;
+            color: var(--content-primary);
+            line-height: 1.6;
+            font-size: 14px;
         }
 
         .error-section {
-            background: #2a0a0a;
-            border: 1px solid #aa0000;
+            background: var(--bg-secondary);
+            border: 1px solid var(--accent-error);
             border-radius: 8px;
-            padding: 25px;
+            padding: 35px;
             margin-bottom: 30px;
             display: none;
+            box-shadow: 0 2px 8px var(--shadow-color);
         }
 
         .error-title {
-            color: #ff4444;
+            color: var(--accent-error);
             font-size: 1.3em;
-            font-weight: bold;
+            font-weight: 700;
             margin-bottom: 10px;
         }
 
         .error-message {
-            color: #ff8888;
+            color: var(--accent-orange);
+            font-weight: 500;
         }
 
         /* Scrollbar styling */
@@ -230,26 +302,26 @@
         }
 
         ::-webkit-scrollbar-track {
-            background: #000;
+            background: var(--bg-highlight);
         }
 
         ::-webkit-scrollbar-thumb {
-            background: #333;
+            background: var(--border-color);
             border-radius: 4px;
         }
 
         ::-webkit-scrollbar-thumb:hover {
-            background: #555;
+            background: var(--content-secondary);
         }
 
-        /* Terminal-like blinking cursor effect */
-        @keyframes blink {
-            0%, 50% { opacity: 1; }
-            51%, 100% { opacity: 0; }
+        /* Loading animation */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
-        .cursor {
-            animation: blink 1s infinite;
+        .loading {
+            animation: pulse 2s infinite;
         }
 
         /* Responsive design */
@@ -271,6 +343,7 @@
 <body>
     <div class="container">
         <header class="header">
+            <button class="theme-toggle" id="themeToggle">🌙 Dark</button>
             <h1>ScholarQA</h1>
             <p>AI-Powered Research Assistant for Scientific Literature</p>
         </header>
@@ -345,11 +418,11 @@
         const errorMessage = document.getElementById('errorMessage');
 
         const steps = {
-            'initializing': { text: 'Initializing system...', progress: 10, step: '1 of 5' },
-            'config_loaded': { text: 'Configuration loaded', progress: 20, step: '2 of 5' },
-            'setup_models': { text: 'Setting up AI models...', progress: 30, step: '3 of 5' },
-            'processing': { text: 'Processing query (this may take several minutes)...', progress: 50, step: '4 of 5' },
-            'formatting': { text: 'Formatting results...', progress: 90, step: '5 of 5' }
+            'initializing': { text: 'Initializing system...', progress: 20, step: '1 of 5' },
+            'config_loaded': { text: 'Configuration loaded', progress: 40, step: '2 of 5' },
+            'setup_models': { text: 'Setting up AI models...', progress: 60, step: '3 of 5' },
+            'processing': { text: 'Processing query (this may take several minutes)...', progress: 80, step: '4 of 5' },
+            'formatting': { text: 'Formatting results...', progress: 100, step: '5 of 5' }
         };
 
         function generateClientId() {
@@ -406,8 +479,11 @@
                 statusText.textContent = stepInfo.text;
                 progressFill.style.width = stepInfo.progress + '%';
                 stepIndicator.textContent = stepInfo.step;
+                console.log(`Progress update: ${step} - ${stepInfo.progress}% - ${stepInfo.step}`);
             } else {
-                statusText.textContent = message;
+                // Handle custom messages that don't match predefined steps
+                statusText.textContent = message || step;
+                console.log(`Custom progress update: ${message || step}`);
             }
         }
 
@@ -486,12 +562,51 @@
             connectWebSocket();
         });
 
-        // Add some terminal-like effects
+        // Theme management
+        function getStoredTheme() {
+            return localStorage.getItem('theme') || 'light';
+        }
+
+        function setStoredTheme(theme) {
+            localStorage.setItem('theme', theme);
+        }
+
+        function updateTheme(theme) {
+            const html = document.documentElement;
+            const themeToggle = document.getElementById('themeToggle');
+            
+            if (theme === 'dark') {
+                html.setAttribute('data-theme', 'dark');
+                themeToggle.textContent = '☀️ Light';
+            } else {
+                html.removeAttribute('data-theme');
+                themeToggle.textContent = '🌙 Dark';
+            }
+            
+            setStoredTheme(theme);
+        }
+
+        function toggleTheme() {
+            const currentTheme = getStoredTheme();
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            updateTheme(newTheme);
+        }
+
+        // Initialize theme and add event listeners
         document.addEventListener('DOMContentLoaded', function() {
-            // Add cursor effect to headers
-            const headers = document.querySelectorAll('h1');
-            headers.forEach(header => {
-                header.innerHTML += '<span class="cursor">_</span>';
+            // Set initial theme
+            updateTheme(getStoredTheme());
+            
+            // Theme toggle functionality
+            const themeToggle = document.getElementById('themeToggle');
+            themeToggle.addEventListener('click', toggleTheme);
+            
+            // Add loading class when processing
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.addEventListener('click', function() {
+                if (!submitBtn.disabled) {
+                    submitBtn.classList.add('loading');
+                }
             });
         });
     </script>
