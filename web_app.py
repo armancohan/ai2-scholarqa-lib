@@ -87,8 +87,7 @@ class WebSocketStateMgr(LocalStateMgrClient):
             try:
                 # Use call_soon_threadsafe to schedule the coroutine from any thread
                 future = asyncio.run_coroutine_threadsafe(
-                    self.connection_manager.send_message(message, self.client_id),
-                    self.event_loop
+                    self.connection_manager.send_message(message, self.client_id), self.event_loop
                 )
                 logger.info(f"Progress message scheduled successfully: {status}")
             except Exception as e:
@@ -201,10 +200,10 @@ async def process_query(message: dict, client_id: str):
         # Process the query
         # Run in executor to avoid blocking the event loop while allowing progress updates
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
             result = await asyncio.get_event_loop().run_in_executor(
-                executor, 
-                lambda: scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
+                executor, lambda: scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
             )
 
         await manager.send_message({"type": "status", "step": "formatting", "message": "Formatting results..."}, client_id)
@@ -219,12 +218,9 @@ async def process_query(message: dict, client_id: str):
                 formatted_result += f"\nTLDR: {section['tldr']}\n\n"
             formatted_result += section["text"] + "\n"
             if section.get("citations"):
-                formatted_result += "\nCitations:\n"
-                formatted_result += "```\n"
                 for citation in section["citations"]:
                     paper = citation["paper"]
                     all_citations.add(paper["bibtex"])
-                formatted_result += "```\n"
             formatted_result += "\n" + "=" * 80 + "\n\n"
         formatted_result += "\n" + "=" * 80 + "\n\n"
         formatted_result += "\n".join(list(all_citations))
