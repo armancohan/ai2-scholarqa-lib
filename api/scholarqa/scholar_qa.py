@@ -547,6 +547,7 @@ class ScholarQA:
             msg_id=msg_id
         )
         llm_processed_query = self.preprocess_query(query, cost_args)
+        logger.info(f"LLM processed query: {llm_processed_query}")
         event_trace.trace_decomposition_event(llm_processed_query)
 
         # Paper finder step - retrieve relevant paper passages from semantic scholar index and api

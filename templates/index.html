@@ -464,6 +464,9 @@
                 case 'status':
                     updateProgress(message.step, message.message);
                     break;
+                case 'progress':
+                    updateProgressFromScholarQA(message.status, message.step_estimated_time, message.task_estimated_time);
+                    break;
                 case 'complete':
                     showResults(message.result, message.cost, message.output_file);
                     break;
@@ -485,6 +488,51 @@
                 statusText.textContent = message || step;
                 console.log(`Custom progress update: ${message || step}`);
             }
+        }
+
+        function updateProgressFromScholarQA(status, stepEstimatedTime, taskEstimatedTime) {
+            // Update status text with the detailed progress from ScholarQA
+            statusText.textContent = status;
+            
+            // Update step indicator with timing information if available
+            let stepText = '';
+            if (taskEstimatedTime) {
+                stepText = `Estimated time: ${taskEstimatedTime}`;
+            } else if (stepEstimatedTime && stepEstimatedTime > 0) {
+                stepText = `Est. ${stepEstimatedTime}s for this step`;
+            }
+            
+            if (stepText) {
+                stepIndicator.textContent = stepText;
+            }
+            
+            // Smooth progress bar animation based on the stage of processing
+            let progressPercentage = 80; // Default to processing stage
+            if (status.includes('Processing user query')) {
+                progressPercentage = 10;
+            } else if (status.includes('Retrieving relevant passages')) {
+                progressPercentage = 20;
+            } else if (status.includes('Retrieved') && status.includes('passages')) {
+                progressPercentage = 30;
+            } else if (status.includes('re-rank')) {
+                progressPercentage = 40;
+            } else if (status.includes('Found') && status.includes('papers')) {
+                progressPercentage = 50;
+            } else if (status.includes('Extracting salient')) {
+                progressPercentage = 60;
+            } else if (status.includes('Synthesizing an answer outline')) {
+                progressPercentage = 70;
+            } else if (status.includes('Start generating each section')) {
+                progressPercentage = 80;
+            } else if (status.includes('Iteratively generating section')) {
+                progressPercentage = 85;
+            } else if (status.includes('Generating comparison tables')) {
+                progressPercentage = 95;
+            }
+            
+            progressFill.style.width = progressPercentage + '%';
+            
+            console.log(`ScholarQA progress: ${status} (${progressPercentage}%)`);
         }
 
         function showResults(result, cost, outputFile) {

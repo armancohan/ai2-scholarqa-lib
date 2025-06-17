@@ -68,6 +68,8 @@ def decompose_query(query: str, decomposer_llm_model: str, **llm_kwargs) -> Tupl
             search_filters["fieldsOfStudy"] = decomposed_query.field_of_study
     except Exception as e:
         logger.error(f"Error while decomposing query: {e}")
+        import traceback
+        traceback.print_exc()
         rewritten_query = query
         keyword_query = ""
         decomp_query_res = decomp_query_res._replace(model=f"error-{decomp_query_res.model}")

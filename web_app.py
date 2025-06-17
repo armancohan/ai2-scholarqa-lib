@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from query_scholar import load_config, setup_scholar_qa
+from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,51 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+class WebSocketStateMgr(LocalStateMgrClient):
+    """Custom state manager that forwards progress updates to WebSocket clients"""
+    
+    def __init__(self, client_id: str, connection_manager: ConnectionManager):
+        self.client_id = client_id
+        self.connection_manager = connection_manager
+    
+    def get_state_mgr(self, tool_req=None):
+        """Return None as we don't use the traditional state manager"""
+        return None
+    
+    def update_task_state(self, task_id: str, tool_request, status: str, 
+                         step_estimated_time: int = 0, curr_response=None, 
+                         task_estimated_time: str = None):
+        """Forward progress updates to WebSocket client"""
+        message = {
+            "type": "progress",
+            "task_id": task_id,
+            "status": status,
+            "step_estimated_time": step_estimated_time,
+            "task_estimated_time": task_estimated_time
+        }
+        
+        # Send the progress update asynchronously
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(self.connection_manager.send_message(message, self.client_id))
+        except RuntimeError:
+            # If no loop is running, we can't send the message
+            logger.warning(f"Could not send progress update: {status}")
+    
+    def get_task_state(self, task_id: str):
+        """Not implemented for web interface"""
+        return None
+    
+    def save_task_result(self, task_id: str, result):
+        """Not implemented for web interface"""
+        pass
+    
+    def get_task_result(self, task_id: str):
+        """Not implemented for web interface"""
+        return None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -119,7 +165,8 @@ async def process_query(message: dict, client_id: str):
             {"type": "status", "step": "setup_models", "message": "Setting up ScholarQA models..."}, client_id
         )
 
-        # Initialize ScholarQA
+        # Initialize ScholarQA with custom state manager for progress tracking
+        custom_state_mgr = WebSocketStateMgr(client_id, manager)
         scholar_qa = setup_scholar_qa(
             reranker_model=reranker,
             reranker_type=reranker_type,
@@ -132,6 +179,7 @@ async def process_query(message: dict, client_id: str):
             fallback_model=config.get("fallback_model"),
             table_column_model=config.get("table_column_model"),
             table_value_model=config.get("table_value_model"),
+            state_mgr=custom_state_mgr,
         )
 
         await manager.send_message(
@@ -181,6 +229,8 @@ async def process_query(message: dict, client_id: str):
 
     except Exception as e:
         logger.error(f"Error processing query for {client_id}: {e}")
+        import traceback
+        traceback.print_exc()
         await manager.send_message({"type": "error", "message": f"Error processing query: {str(e)}"}, client_id)
 
 

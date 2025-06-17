@@ -55,7 +55,8 @@ def setup_scholar_qa(reranker_model: str, reranker_type: str = "qwen_vllm", rera
                      llm_model: str = None, decomposer_model: str = None, 
                      quote_extraction_model: str = None, clustering_model: str = None,
                      summary_generation_model: str = None, fallback_model: str = None, 
-                     table_column_model: str = None, table_value_model: str = None) -> ScholarQA:
+                     table_column_model: str = None, table_value_model: str = None, 
+                     state_mgr=None) -> ScholarQA:
     """Initialize and return a configured ScholarQA instance.
 
     Returns:
@@ -112,6 +113,7 @@ def setup_scholar_qa(reranker_model: str, reranker_type: str = "qwen_vllm", rera
         fallback_llm=fallback_model,
         table_column_model=table_column_model,
         table_value_model=table_value_model,
+        state_mgr=state_mgr,
         # Disable table generation for simplicity
         run_table_generation=False,
     )
