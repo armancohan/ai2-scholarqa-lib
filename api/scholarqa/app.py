@@ -3,10 +3,13 @@ import multiprocessing
 import os
 from json import JSONDecodeError
 from time import time
-from typing import Union
+from typing import Union, Dict
 from uuid import uuid4, uuid5, UUID
+import json
+import asyncio
+import glob
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from nora_lib.tasks.models import TASK_STATUSES, AsyncTaskState
 from nora_lib.tasks.state import NoSuchTaskException
 
@@ -37,8 +40,92 @@ started_task_step = None
 T = TypeVar("T", bound=ScholarQA)
 
 
+class WebSocketManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.task_connections: Dict[str, str] = {}  # task_id -> client_id mapping
+
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        self.active_connections[client_id] = websocket
+        logger.info(f"WebSocket client {client_id} connected")
+
+    def disconnect(self, client_id: str):
+        if client_id in self.active_connections:
+            del self.active_connections[client_id]
+        # Remove task connections for this client
+        task_ids_to_remove = [task_id for task_id, cid in self.task_connections.items() if cid == client_id]
+        for task_id in task_ids_to_remove:
+            del self.task_connections[task_id]
+        logger.info(f"WebSocket client {client_id} disconnected")
+
+    def register_task(self, task_id: str, client_id: str):
+        self.task_connections[task_id] = client_id
+
+    async def send_task_update(self, task_id: str, message: dict):
+        client_id = self.task_connections.get(task_id)
+        if client_id and client_id in self.active_connections:
+            try:
+                await self.active_connections[client_id].send_text(json.dumps(message))
+                logger.debug(f"Sent task update for {task_id} to client {client_id}")
+            except Exception as e:
+                logger.error(f"Error sending task update to {client_id}: {e}")
+                self.disconnect(client_id)
+
+    async def send_message(self, message: dict, client_id: str):
+        if client_id in self.active_connections:
+            try:
+                await self.active_connections[client_id].send_text(json.dumps(message))
+            except Exception as e:
+                logger.error(f"Error sending message to {client_id}: {e}")
+                self.disconnect(client_id)
+
+
+websocket_manager = WebSocketManager()
+
+
+async def monitor_notifications():
+    """Background task to monitor notification files and send WebSocket updates"""
+    notifications_dir = os.path.join(logs_config.log_dir, "async_state", "notifications")
+    
+    while True:
+        try:
+            if os.path.exists(notifications_dir):
+                # Find all notification files
+                notification_files = glob.glob(os.path.join(notifications_dir, "*.json"))
+                
+                for file_path in notification_files:
+                    try:
+                        with open(file_path, 'r') as f:
+                            message = json.load(f)
+                        
+                        # Send WebSocket update
+                        if message.get("task_id"):
+                            await websocket_manager.send_task_update(message["task_id"], message)
+                        
+                        # Clean up the notification file
+                        os.remove(file_path)
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing notification file {file_path}: {e}")
+                        # Try to remove corrupted file
+                        try:
+                            os.remove(file_path)
+                        except:
+                            pass
+            
+            # Wait before checking again
+            await asyncio.sleep(0.1)  # Check every 100ms for responsiveness
+            
+        except Exception as e:
+            logger.error(f"Error in notification monitor: {e}")
+            await asyncio.sleep(1)  # Wait longer on error
+
+
 def lazy_load_state_mgr_client():
-    return LocalStateMgrClient(logs_config.log_dir, "async_state")
+    state_mgr = LocalStateMgrClient(logs_config.log_dir, "async_state")
+    state_mgr.set_websocket_callback(websocket_manager.send_task_update)
+    return state_mgr
 
 
 def lazy_load_scholarqa(task_id: str, sqa_class: Type[T] = ScholarQA, **sqa_args) -> T:
@@ -100,6 +187,11 @@ def _estimate_task_length(tool_request: ToolRequest) -> str:
 def create_app() -> FastAPI:
     app = FastAPI(root_path="/api")
 
+    @app.on_event("startup")
+    async def startup_event():
+        # Start the background task to monitor notifications
+        asyncio.create_task(monitor_notifications())
+
     @app.get("/")
     def root(request: Request):
         return {"message": "Hello World", "root_path": request.scope.get("root_path")}
@@ -107,6 +199,28 @@ def create_app() -> FastAPI:
     @app.get("/health", status_code=204)
     def health():
         return "OK"
+
+    @app.websocket("/ws/{client_id}")
+    async def websocket_endpoint(websocket: WebSocket, client_id: str):
+        await websocket_manager.connect(websocket, client_id)
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                
+                if message["type"] == "register_task":
+                    task_id = message["task_id"]
+                    websocket_manager.register_task(task_id, client_id)
+                    await websocket_manager.send_message({
+                        "type": "task_registered",
+                        "task_id": task_id
+                    }, client_id)
+                    
+        except WebSocketDisconnect:
+            websocket_manager.disconnect(client_id)
+        except Exception as e:
+            logger.error(f"WebSocket error for {client_id}: {e}")
+            websocket_manager.disconnect(client_id)
 
     @app.post("/query_corpusqa")
     def use_tool(

@@ -5,6 +5,7 @@ import { Sections } from './Sections';
 import { historyType } from './shared';
 import { AsyncTaskState, TaskStatus, TaskStep } from '../@types/AsyncTaskState';
 import { StepProgress, StepProgressPropType } from './StepProgress';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 const DEFAULT_INTERVAL = 3000;
 
@@ -25,17 +26,63 @@ export const Results: React.FC<PropType> = (props) => {
 
   const [status, setStatus] = useState<AsyncTaskState | undefined>();
   const [httpStatus, setHttpStatus] = useState<number>(200);
+  const [usePolling, setUsePolling] = useState<boolean>(false);
 
   const [progressProps, setProgressProps] = useState<StepProgressPropType>({
     estimatedTime: 'Loading...',
     steps: [],
   })
 
+  // Initialize WebSocket connection
+  const { isConnected, taskState, registerTask, disconnect } = useWebSocket(cookieUserId || 'anonymous');
+
+  // Register task with WebSocket when connected
   useEffect(() => {
+    if (isConnected && taskId && !usePolling) {
+      registerTask(taskId);
+    }
+  }, [isConnected, taskId, registerTask, usePolling]);
+
+  // Handle WebSocket task state updates
+  useEffect(() => {
+    if (taskState && !usePolling) {
+      setStatus(taskState);
+      setHttpStatus(200);
+      
+      const task_status = taskState?.task_status as undefined | TaskStatus;
+      const estimated_time = taskState?.estimated_time;
+      const taskRunning = isTaskRunning(taskState);
+      
+      if (taskRunning && typeof task_status === 'string' && typeof estimated_time === 'string' && taskState.steps) {
+        setProgressProps({
+          estimatedTime: estimated_time ?? 'Loading...',
+          steps: taskState.steps as TaskStep[]
+        })
+      } else if (!taskRunning) {
+        setProgressProps({
+          estimatedTime: 'Complete',
+          steps: taskState.steps as TaskStep[] || []
+        })
+      }
+    }
+  }, [taskState, usePolling]);
+
+  // Fallback to polling if WebSocket fails
+  useEffect(() => {
+    if (!isConnected && !usePolling) {
+      console.log('WebSocket not connected, falling back to polling');
+      setUsePolling(true);
+    }
+  }, [isConnected, usePolling]);
+
+  // Polling logic (fallback)
+  useEffect(() => {
+    if (!usePolling) return;
+    
     const timeoutIds: number[] = [];
 
     const inner = async () => {
-      console.log('timeout - results', taskId);
+      console.log('polling - results', taskId);
       const { update, httpStatus } = await updateStatus(taskId);
       setHttpStatus(httpStatus);
       setStatus(update);
@@ -57,11 +104,9 @@ export const Results: React.FC<PropType> = (props) => {
               steps: update.steps as TaskStep[]
             })
           } else {
-            const startTime = 0;
-            const statusText = 'Loading...'
             setProgressProps({
-              estimatedTime: 'Loading...',
-              steps: []
+              estimatedTime: taskRunning ? 'Loading...' : 'Complete',
+              steps: update.steps as TaskStep[] || []
             })
           }
         } catch (e) {
@@ -77,7 +122,14 @@ export const Results: React.FC<PropType> = (props) => {
     return () => {
       timeoutIds.forEach(clearTimeout);
     }
-  }, [taskId, interval]);
+  }, [taskId, interval, usePolling]);
+
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      disconnect();
+    };
+  }, [disconnect]);
 
   const taskRunning = isTaskRunning(status);
   useEffect(() => {
