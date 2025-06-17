@@ -523,8 +523,11 @@ class ScholarQA:
 
         """
         self.tool_request = req
+        # Ensure task_id is set before any update_task_state calls
+        if not self.task_id:
+            self.task_id = req.task_id
         self.update_task_state("Processing user query", task_estimated_time="~3 minutes", step_estimated_time=5)
-        task_id = self.task_id if self.task_id else req.task_id
+        task_id = self.task_id
         user_id, msg_id = self.get_user_msg_id()
         msg_id = task_id if not msg_id else msg_id
         query = req.query

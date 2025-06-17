@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import json
 import logging
 import os
@@ -9,9 +10,9 @@ from typing import Dict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
 
 from query_scholar import load_config, setup_scholar_qa
-from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,47 +50,57 @@ manager = ConnectionManager()
 
 class WebSocketStateMgr(LocalStateMgrClient):
     """Custom state manager that forwards progress updates to WebSocket clients"""
-    
-    def __init__(self, client_id: str, connection_manager: ConnectionManager):
+
+    def __init__(self, client_id: str, connection_manager: ConnectionManager, logs_dir: str = "web_logs"):
+        # Initialize parent with a temporary logs directory
+        super().__init__(logs_dir)
         self.client_id = client_id
         self.connection_manager = connection_manager
-    
-    def get_state_mgr(self, tool_req=None):
-        """Return None as we don't use the traditional state manager"""
-        return None
-    
-    def update_task_state(self, task_id: str, tool_request, status: str, 
-                         step_estimated_time: int = 0, curr_response=None, 
-                         task_estimated_time: str = None):
-        """Forward progress updates to WebSocket client"""
+        # Store the current event loop for later use
+        try:
+            self.event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.event_loop = None
+
+    def update_task_state(
+        self,
+        task_id: str,
+        tool_request,
+        status: str,
+        step_estimated_time: int = 0,
+        curr_response=None,
+        task_estimated_time: str = None,
+    ):
+        """Forward progress updates to WebSocket client and call parent"""
+        # Send WebSocket message
         message = {
             "type": "progress",
             "task_id": task_id,
             "status": status,
             "step_estimated_time": step_estimated_time,
-            "task_estimated_time": task_estimated_time
+            "task_estimated_time": task_estimated_time,
         }
-        
+
         # Send the progress update asynchronously
-        import asyncio
+        logger.info(f"Attempting to send progress update: {status}")
+        if self.event_loop and not self.event_loop.is_closed():
+            try:
+                # Use call_soon_threadsafe to schedule the coroutine from any thread
+                future = asyncio.run_coroutine_threadsafe(
+                    self.connection_manager.send_message(message, self.client_id),
+                    self.event_loop
+                )
+                logger.info(f"Progress message scheduled successfully: {status}")
+            except Exception as e:
+                logger.error(f"Error scheduling progress update: {status} - {e}")
+        else:
+            logger.warning(f"No event loop available, cannot send progress: {status}")
+
+        # Also call parent method to maintain state
         try:
-            loop = asyncio.get_event_loop()
-            loop.create_task(self.connection_manager.send_message(message, self.client_id))
-        except RuntimeError:
-            # If no loop is running, we can't send the message
-            logger.warning(f"Could not send progress update: {status}")
-    
-    def get_task_state(self, task_id: str):
-        """Not implemented for web interface"""
-        return None
-    
-    def save_task_result(self, task_id: str, result):
-        """Not implemented for web interface"""
-        pass
-    
-    def get_task_result(self, task_id: str):
-        """Not implemented for web interface"""
-        return None
+            super().update_task_state(task_id, tool_request, status, step_estimated_time, curr_response, task_estimated_time)
+        except Exception as e:
+            logger.warning(f"Error calling parent update_task_state: {e}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -188,11 +199,18 @@ async def process_query(message: dict, client_id: str):
         )
 
         # Process the query
-        result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
+        # Run in executor to avoid blocking the event loop while allowing progress updates
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            result = await asyncio.get_event_loop().run_in_executor(
+                executor, 
+                lambda: scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
+            )
 
         await manager.send_message({"type": "status", "step": "formatting", "message": "Formatting results..."}, client_id)
 
         # Format the result
+        all_citations = set()
         formatted_result = ""
         for section in result["sections"]:
             formatted_result += f"\n{section['title']}\n"
@@ -205,9 +223,12 @@ async def process_query(message: dict, client_id: str):
                 formatted_result += "```\n"
                 for citation in section["citations"]:
                     paper = citation["paper"]
-                    formatted_result += paper["bibtex"] + "\n"
+                    all_citations.add(paper["bibtex"])
                 formatted_result += "```\n"
             formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n".join(list(all_citations))
+        formatted_result += "\n" + "=" * 80 + "\n\n"
 
         # Add cost information
         if "cost" in result:
@@ -230,6 +251,7 @@ async def process_query(message: dict, client_id: str):
     except Exception as e:
         logger.error(f"Error processing query for {client_id}: {e}")
         import traceback
+
         traceback.print_exc()
         await manager.send_message({"type": "error", "message": f"Error processing query: {str(e)}"}, client_id)
 

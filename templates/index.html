@@ -460,11 +460,13 @@
         }
 
         function handleWebSocketMessage(message) {
+            console.log('Received WebSocket message:', message);
             switch (message.type) {
                 case 'status':
                     updateProgress(message.step, message.message);
                     break;
                 case 'progress':
+                    console.log('Handling progress message:', message.status);
                     updateProgressFromScholarQA(message.status, message.step_estimated_time, message.task_estimated_time);
                     break;
                 case 'complete':
@@ -473,6 +475,8 @@
                 case 'error':
                     showError(message.message);
                     break;
+                default:
+                    console.log('Unknown message type:', message.type);
             }
         }
 
@@ -491,6 +495,7 @@
         }
 
         function updateProgressFromScholarQA(status, stepEstimatedTime, taskEstimatedTime) {
+            console.log(`updateProgressFromScholarQA called with: status="${status}", stepTime=${stepEstimatedTime}, taskTime=${taskEstimatedTime}`);
             // Update status text with the detailed progress from ScholarQA
             statusText.textContent = status;
             
