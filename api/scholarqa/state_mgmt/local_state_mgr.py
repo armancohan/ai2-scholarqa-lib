@@ -52,7 +52,8 @@ class AbsStateMgrClient(ABC):
         state_mgr.write_state(task_state)
         
         # Write WebSocket update to a notification file for the main process to pick up
-        if self.websocket_callback and self._async_state_dir:
+        # Always create notifications in multiprocess environments
+        if self._async_state_dir:
             try:
                 update_message = {
                     "type": "task_update",

@@ -4,10 +4,11 @@ import os
 from json import JSONDecodeError
 from time import time
 from typing import Union, Dict
-from uuid import uuid4, uuid5, UUID
+from uuid import uuid4
 import json
 import asyncio
 import glob
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from nora_lib.tasks.models import TASK_STATUSES, AsyncTaskState
@@ -21,7 +22,6 @@ from scholarqa.models import (
     ToolResponse,
     TaskStep
 )
-from scholarqa.rag.reranker.modal_engine import ModalReranker
 from scholarqa.rag.reranker.reranker_base import RERANKER_MAPPING
 from scholarqa.rag.retrieval import PaperFinderWithReranker, PaperFinder
 from scholarqa.rag.retriever_base import FullTextRetriever
@@ -87,6 +87,7 @@ websocket_manager = WebSocketManager()
 async def monitor_notifications():
     """Background task to monitor notification files and send WebSocket updates"""
     notifications_dir = os.path.join(logs_config.log_dir, "async_state", "notifications")
+    logger.info(f"Starting notification monitor for {notifications_dir}")
     
     while True:
         try:
@@ -102,6 +103,7 @@ async def monitor_notifications():
                         # Send WebSocket update
                         if message.get("task_id"):
                             await websocket_manager.send_task_update(message["task_id"], message)
+                            logger.debug(f"Sent WebSocket update for task {message['task_id']}")
                         
                         # Clean up the notification file
                         os.remove(file_path)
@@ -120,6 +122,21 @@ async def monitor_notifications():
         except Exception as e:
             logger.error(f"Error in notification monitor: {e}")
             await asyncio.sleep(1)  # Wait longer on error
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    task = asyncio.create_task(monitor_notifications())
+    logger.info("Started WebSocket notification monitor")
+    yield
+    # Shutdown
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Stopped WebSocket notification monitor")
 
 
 def lazy_load_state_mgr_client():
@@ -185,12 +202,7 @@ def _estimate_task_length(tool_request: ToolRequest) -> str:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(root_path="/api")
-
-    @app.on_event("startup")
-    async def startup_event():
-        # Start the background task to monitor notifications
-        asyncio.create_task(monitor_notifications())
+    app = FastAPI(root_path="/api", lifespan=lifespan)
 
     @app.get("/")
     def root(request: Request):
