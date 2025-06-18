@@ -10,10 +10,11 @@ from typing import Dict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
-
-from query_scholar import load_config, setup_scholar_qa, AVAILABLE_MODELS
 from scholarqa.llms.constants import GPT_41_MINI
+from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
+from scholarqa.utils import format_citation
+
+from query_scholar import AVAILABLE_MODELS, load_config, setup_scholar_qa
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -118,7 +119,7 @@ async def read_root(request: Request):
                 pass
 
         config_names = list(configs.keys()) if configs else ["default"]
-        
+
         # Prepare available models for the frontend
         available_models = []
         for model in sorted(AVAILABLE_MODELS):
@@ -137,19 +138,19 @@ async def read_root(request: Request):
                 display_name = "Llama 3.1 405B (Together AI)"
             else:
                 display_name = model
-            
-            available_models.append({
-                "value": model,
-                "display_name": display_name
-            })
-        
+
+            available_models.append({"value": model, "display_name": display_name})
+
         logger.info(f"Serving index.html with configs: {config_names}")
-        return templates.TemplateResponse("index.html", {
-            "request": request, 
-            "config_names": config_names,
-            "available_models": available_models,
-            "default_model": GPT_41_MINI
-        })
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "config_names": config_names,
+                "available_models": available_models,
+                "default_model": GPT_41_MINI,
+            },
+        )
     except Exception as e:
         logger.error(f"Error in read_root: {e}")
         return HTMLResponse(f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
@@ -179,7 +180,7 @@ async def process_query(message: dict, client_id: str):
         query = message["query"]
         config_name = message.get("config_name", "llm_reranker")
         inline_tags = message.get("inline_tags", False)
-        
+
         # Extract model selections from the frontend
         main_model = message.get("main_model", "")
         decomposer_model = message.get("decomposer_model", "")
@@ -215,21 +216,23 @@ async def process_query(message: dict, client_id: str):
 
         # Initialize ScholarQA with custom state manager for progress tracking
         custom_state_mgr = WebSocketStateMgr(client_id, manager)
-        
+
         # Use user-selected models or fall back to config defaults
         final_main_model = main_model or config.get("model")
         final_decomposer_model = decomposer_model or config.get("decomposer_model")
         final_quote_extraction_model = quote_extraction_model or config.get("quote_extraction_model")
         final_clustering_model = clustering_model or config.get("clustering_model")
         final_summary_generation_model = summary_generation_model or config.get("summary_generation_model")
-        
+
         # Log the models being used
-        logger.info(f"Using models - Main: {final_main_model}, "
-                   f"Decomposer: {final_decomposer_model}, "
-                   f"Quote Extraction: {final_quote_extraction_model}, "
-                   f"Clustering: {final_clustering_model}, "
-                   f"Summary Generation: {final_summary_generation_model}")
-        
+        logger.info(
+            f"Using models - Main: {final_main_model}, "
+            f"Decomposer: {final_decomposer_model}, "
+            f"Quote Extraction: {final_quote_extraction_model}, "
+            f"Clustering: {final_clustering_model}, "
+            f"Summary Generation: {final_summary_generation_model}"
+        )
+
         scholar_qa = setup_scholar_qa(
             reranker_model=reranker,
             reranker_type=reranker_type,
@@ -250,19 +253,22 @@ async def process_query(message: dict, client_id: str):
             client_id,
         )
 
-        # Process the query
-        # Run in executor to avoid blocking the event loop while allowing progress updates
-        import concurrent.futures
+        # # Run in executor to avoid blocking the event loop while allowing progress updates
+        # import concurrent.futures
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            result = await asyncio.get_event_loop().run_in_executor(
-                executor, lambda: scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
-            )
+        # with concurrent.futures.ThreadPoolExecutor() as executor:
+        #     result = await asyncio.get_event_loop().run_in_executor(
+        #         executor, lambda: scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
+        #     )
+
+        # Process the query
+        result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
 
         await manager.send_message({"type": "status", "step": "formatting", "message": "Formatting results..."}, client_id)
 
         # Format the result
         all_citations = set()
+        all_citations_plain_text = set()
         formatted_result = ""
         for section in result["sections"]:
             formatted_result += f"\n{section['title']}\n"
@@ -274,7 +280,14 @@ async def process_query(message: dict, client_id: str):
                 for citation in section["citations"]:
                     paper = citation["paper"]
                     all_citations.add(paper["bibtex"])
+                    all_citations_plain_text.add(format_citation(paper))
             formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "CITATIONS" + "\n\n"
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n\n".join(list(all_citations_plain_text))
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "BIBTEX CITATIONS" + "\n\n"
         formatted_result += "\n" + "=" * 80 + "\n\n"
         formatted_result += "\n".join(list(all_citations))
         formatted_result += "\n" + "=" * 80 + "\n\n"

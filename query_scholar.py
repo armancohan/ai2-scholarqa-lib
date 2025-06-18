@@ -7,19 +7,14 @@ import os
 from datetime import datetime
 
 from scholarqa.config.config_setup import LogsConfig
-from scholarqa.llms.constants import (
-    CLAUDE_3_OPUS,
-    CLAUDE_4_SONNET,
-    CLAUDE_35_SONNET,
-    GEMINI_25_FLASH,
-    GEMINI_25_PRO,
-    GPT_4_TURBO,
-    GPT_41,
-    GPT_41_MINI,
-    LLAMA_405_TOGETHER_AI,
-    GPT_4o,
-)
-from scholarqa.rag.reranker.reranker_base import RERANKER_MAPPING, LLMReranker, QWENRerankerVLLM
+from scholarqa.llms.constants import (CLAUDE_3_OPUS, CLAUDE_4_SONNET,
+                                      CLAUDE_35_SONNET, GEMINI_25_FLASH,
+                                      GEMINI_25_PRO, GPT_4_TURBO, GPT_41,
+                                      GPT_41_MINI, LLAMA_405_TOGETHER_AI,
+                                      GPT_4o)
+from scholarqa.rag.reranker.reranker_base import (RERANKER_MAPPING,
+                                                  LLMReranker,
+                                                  QWENRerankerVLLM)
 from scholarqa.rag.retrieval import PaperFinderWithReranker
 from scholarqa.rag.retriever_base import FullTextRetriever
 from scholarqa.scholar_qa import ScholarQA
@@ -202,6 +197,7 @@ def main():
     parser.add_argument(
         "--table-value-model", type=str, help=f"The LLM model to use for table value generation. If not specified, uses GPT_41."
     )
+    parser.add_argument("--llm-kwargs", type=str, help=f"The LLM kwargs to use. If not specified, uses the default.")
     args = parser.parse_args()
 
     # Load configuration from file
@@ -221,7 +217,7 @@ def main():
 
     # Apply configuration defaults with fallbacks
     apply_config_default("reranker", fallback_default="Qwen/Qwen3-Reranker-4B")
-    apply_config_default("reranker_type", fallback_default="qwen_vllm")
+    apply_config_default("reranker_type", fallback_default="llm")
     apply_config_default("reranker_llm_model")
     apply_config_default("model")
     apply_config_default("decomposer_model")
