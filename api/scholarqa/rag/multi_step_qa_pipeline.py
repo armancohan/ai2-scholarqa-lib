@@ -67,7 +67,7 @@ class MultiStepQAPipeline:
         """Add thinking parameter for Gemini models"""
         if model and "gemini-pro" in model.lower():
             kwargs = kwargs.copy()
-            kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+            # kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}  # TODO: uncomment this
         return kwargs
 
     def step_select_quotes(

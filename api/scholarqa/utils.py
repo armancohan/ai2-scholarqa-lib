@@ -200,8 +200,6 @@ def format_sections_to_markdown(row: List[Dict[str, Any]]) -> str:
         return ""
     # convenience function to format the sections of a paper into markdown for function below
     # Convert the list of dictionaries to a DataFrame
-    print("*********************")
-    print(row)
     sentences_df = pd.DataFrame(row)
     if sentences_df.empty:
         return ""
@@ -302,3 +300,94 @@ def format_citation(paper: Dict[str, Any]) -> str:
     citation = f"{authors_str}\n{title}\n{venue_year_url}"
 
     return citation
+
+
+def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str, Any] = None) -> List[Dict]:
+    """Search for future work snippets using Semantic Scholar snippet search API
+
+    Args:
+        corpus_ids: List of corpus IDs to search within
+        paper_metadata: Optional pre-fetched paper metadata dict {corpus_id: metadata}
+
+    Returns snippets with associated paper information including title and abstract.
+    """
+
+    # Search terms related to future work
+    search_terms = ["future work", "future directions"]
+
+    all_snippets = []
+    corpus_ids_str = [f"CorpusId:{cid}" for cid in corpus_ids[:100]]
+
+    for search_term in search_terms:
+        try:
+            params = {
+                "query": search_term,
+                "paperIds": ",".join(corpus_ids_str),  # API limit
+                "limit": 50,
+            }
+
+            # Use the existing S2 API infrastructure
+            data = query_s2_api(end_pt="snippet/search", params=params, method="get")
+
+            if "data" in data and data["data"]:
+                for item in data["data"]:
+                    snippet = item.get("snippet", {}).get("text", "")
+                    if len(snippet) > 50:
+                        matched_corpus_id = str(item.get("paper", {}).get("corpusId", ""))
+                        # Only include snippets from papers we requested
+                        if matched_corpus_id in corpus_ids:
+                            snippet_data = {
+                                "snippet": snippet,
+                                "search_term": search_term,
+                                "matched_corpus_id": matched_corpus_id,
+                                "snippet_section": item.get("snippet", {}).get("section", ""),
+                            }
+                            all_snippets.append(snippet_data)
+
+        except Exception as e:
+            logger.warning(f"Error searching for '{search_term}': {e}")
+            continue
+
+    # Use provided metadata or fetch if not provided
+    if paper_metadata is None:
+        matched_corpus_ids = {snippet["matched_corpus_id"] for snippet in all_snippets}
+        paper_metadata = get_paper_metadata(matched_corpus_ids) if matched_corpus_ids else {}
+
+    # Remove duplicates based on snippet text and associate with paper metadata
+    unique_snippets = []
+    seen_snippets = set()
+
+    for snippet_data in all_snippets:
+        snippet_text = snippet_data["snippet"].lower()
+        if snippet_text not in seen_snippets:
+            seen_snippets.add(snippet_text)
+
+            # Get paper info from metadata
+            corpus_id = snippet_data["matched_corpus_id"]
+            paper_info = paper_metadata.get(corpus_id, {})
+
+            # Only include papers with at least 2 citations
+            citation_count = paper_info.get("citationCount", 0)
+            if citation_count >= 2:  # TODO: hardcode warning for now
+                snippet_with_paper = {
+                    "snippet": snippet_data["snippet"],
+                    "search_term": snippet_data["search_term"],
+                    "paper": {
+                        "title": paper_info.get("title", "Unknown Title"),
+                        "abstract": paper_info.get("abstract", ""),
+                        "corpus_id": corpus_id,
+                        "authors": paper_info.get("authors", []),
+                        "year": paper_info.get("year", ""),
+                        "venue": paper_info.get("venue", ""),
+                        "citationCount": citation_count,
+                    },
+                }
+                unique_snippets.append(snippet_with_paper)
+
+    # Sort by citation count in descending order (highest citations first)
+    unique_snippets.sort(key=lambda x: x["paper"]["citationCount"], reverse=True)
+
+    # Limit to 20 snippets
+    unique_snippets = unique_snippets[:20]
+
+    return unique_snippets

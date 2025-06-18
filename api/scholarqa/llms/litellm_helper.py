@@ -1,14 +1,13 @@
 import logging
 import os
-from dotenv import load_dotenv
-from scholarqa.llms.constants import *
-from typing import List, Any, Callable, Tuple, Iterator, Union, Generator
+from typing import Any, Callable, Generator, Iterator, List, Tuple, Union
 
 import litellm
+from dotenv import load_dotenv
+from langsmith import traceable
 from litellm.caching import Cache
 from litellm.utils import trim_messages
-from langsmith import traceable
-
+from scholarqa.llms.constants import *
 from scholarqa.state_mgmt.local_state_mgr import AbsStateMgrClient
 
 logger = logging.getLogger(__name__)
@@ -17,13 +16,15 @@ litellm._turn_on_debug()
 # load the environment variables from the .env file
 load_dotenv()
 
+
 class CostAwareLLMCaller:
     def __init__(self, state_mgr: AbsStateMgrClient):
         self.state_mgr = state_mgr
 
     @staticmethod
-    def parse_result_args(method_result: Union[Tuple[Any, CompletionResult], CompletionResult]) -> Tuple[
-        Any, List[CompletionResult], List[str]]:
+    def parse_result_args(
+        method_result: Union[Tuple[Any, CompletionResult], CompletionResult],
+    ) -> Tuple[Any, List[CompletionResult], List[str]]:
         if type(method_result) == tuple:
             result, completion_costs = method_result
         else:
@@ -38,8 +39,9 @@ class CostAwareLLMCaller:
         total_cost = self.state_mgr.report_llm_usage(completion_costs=completion_costs, cost_args=cost_args)
         return CostAwareLLMResult(result=result, tot_cost=total_cost, models=completion_models)
 
-    def call_iter_method(self, cost_args: CostReportingArgs, gen_method: Callable, **kwargs) -> Generator[
-        Any, None, CostAwareLLMResult]:
+    def call_iter_method(
+        self, cost_args: CostReportingArgs, gen_method: Callable, **kwargs
+    ) -> Generator[Any, None, CostAwareLLMResult]:
         all_results, all_completion_costs, all_completion_models = [], [], []
         for method_result in gen_method(**kwargs):
             result, completion_costs, completion_models = self.parse_result_args(method_result)
@@ -49,6 +51,32 @@ class CostAwareLLMCaller:
             yield result
         total_cost = self.state_mgr.report_llm_usage(completion_costs=all_completion_costs, cost_args=cost_args)
         return CostAwareLLMResult(result=all_results, tot_cost=total_cost, models=all_completion_models)
+
+    def call_prompt(self, prompt: str, model: str, cost_args: CostReportingArgs, **kwargs) -> CostAwareLLMResult:
+        """Make a direct LLM call with a prompt string"""
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a research scientist working on advanced AI models and LLMs and you are creative and impactful researcher."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        response = litellm.completion(model=model, messages=messages, **kwargs)
+
+        completion_result = CompletionResult(
+            content=response.choices[0].message.content,
+            model=model,
+            cost=response._hidden_params.get("response_cost", 0.0),
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+        )
+
+        # Report usage and return
+        total_cost = self.state_mgr.report_llm_usage(completion_costs=[completion_result], cost_args=cost_args)
+        return CostAwareLLMResult(result=response.choices[0].message.content, tot_cost=total_cost, models=[model])
 
 
 def success_callback(kwargs, completion_response, start_time, end_time):
@@ -66,17 +94,19 @@ def setup_llm_cache(cache_type: str = "s3", **cache_args):
 
 
 @traceable(run_type="llm", name="batch completion")
-def batch_llm_completion(model: str, messages: List[str], system_prompt: str = None, fallback=GPT_41,
-                         **llm_lite_params) -> List[
-    CompletionResult]:
+def batch_llm_completion(
+    model: str, messages: List[str], system_prompt: str = None, fallback=GPT_41, **llm_lite_params
+) -> List[CompletionResult]:
     """returns the result from the llm chat completion api with cost and tokens used"""
     print(f"batch llm call with model {model}")
-    fallbacks = [
-        fallback] if fallback else []  # Disable for now in lieu of https://github.com/BerriAI/litellm/issues/10517
-    messages = [trim_messages([{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}], model)
-                for msg in messages]
-    responses = litellm.completion_with_retries(messages=messages, model=model,
-                                                original_function=litellm.batch_completion, **llm_lite_params)
+    fallbacks = [fallback] if fallback else []  # Disable for now in lieu of https://github.com/BerriAI/litellm/issues/10517
+    messages = [
+        trim_messages([{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}], model)
+        for msg in messages
+    ]
+    responses = litellm.completion_with_retries(
+        messages=messages, model=model, original_function=litellm.batch_completion, **llm_lite_params
+    )
     results = []
     for i, res in enumerate(responses):
         try:
@@ -87,10 +117,14 @@ def batch_llm_completion(model: str, messages: List[str], system_prompt: str = N
 
         res_usage = res.usage
         res_str = res["choices"][0]["message"]["content"].strip()
-        cost_tuple = CompletionResult(content=res_str, model=res["model"],
-                                      cost=res_cost if not res.get("cache_hit") else 0.0,
-                                      input_tokens=res_usage.prompt_tokens,
-                                      output_tokens=res_usage.completion_tokens, total_tokens=res_usage.total_tokens)
+        cost_tuple = CompletionResult(
+            content=res_str,
+            model=res["model"],
+            cost=res_cost if not res.get("cache_hit") else 0.0,
+            input_tokens=res_usage.prompt_tokens,
+            output_tokens=res_usage.completion_tokens,
+            total_tokens=res_usage.total_tokens,
+        )
         results.append(cost_tuple)
     return results
 
@@ -99,8 +133,7 @@ def batch_llm_completion(model: str, messages: List[str], system_prompt: str = N
 def llm_completion(user_prompt: str, system_prompt: str = None, fallback=GPT_41, **llm_lite_params) -> CompletionResult:
     """returns the result from the llm chat completion api with cost and tokens used"""
     messages = []
-    fallbacks = [
-        fallback] if fallback else []  # Disable for now in lieu of https://github.com/BerriAI/litellm/issues/10517
+    fallbacks = [fallback] if fallback else []  # Disable for now in lieu of https://github.com/BerriAI/litellm/issues/10517
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_prompt})
@@ -116,8 +149,12 @@ def llm_completion(user_prompt: str, system_prompt: str = None, fallback=GPT_41,
     if res_str is None:
         logger.warning("Content returned as None, checking for response in tool_calls...")
         res_str = response["choices"][0]["message"]["tool_calls"][0].function.arguments
-    cost_tuple = CompletionResult(content=res_str.strip(), model=response.model,
-                                  cost=res_cost if not response.get("cache_hit") else 0.0,
-                                  input_tokens=res_usage.prompt_tokens,
-                                  output_tokens=res_usage.completion_tokens, total_tokens=res_usage.total_tokens)
+    cost_tuple = CompletionResult(
+        content=res_str.strip(),
+        model=response.model,
+        cost=res_cost if not response.get("cache_hit") else 0.0,
+        input_tokens=res_usage.prompt_tokens,
+        output_tokens=res_usage.completion_tokens,
+        total_tokens=res_usage.total_tokens,
+    )
     return cost_tuple

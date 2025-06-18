@@ -24,7 +24,14 @@ from scholarqa.state_mgmt.local_state_mgr import AbsStateMgrClient, LocalStateMg
 from scholarqa.table_generation.table_generator import TableGenerator
 from scholarqa.table_generation.table_model import TableWidget
 from scholarqa.trace.event_traces import EventTrace
-from scholarqa.utils import CATEGORICAL_META_FIELDS, NUMERIC_META_FIELDS, get_paper_metadata, get_ref_author_str, make_int
+from scholarqa.utils import (
+    CATEGORICAL_META_FIELDS,
+    NUMERIC_META_FIELDS,
+    get_paper_metadata,
+    get_ref_author_str,
+    make_int,
+    search_future_work_snippets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -709,6 +716,155 @@ class ScholarQA:
             json_summary[sidx]["table"] = tables[sidx] if tables[sidx] else None
             generated_sections[sidx].table = tables[sidx] if tables[sidx] else None
         self.postprocess_json_output(json_summary, quotes_meta=quotes_metadata)
+
+        # Generate future ideas section
+        try:
+            future_ideas_section = self.generate_future_ideas_section(json_summary, query, event_trace, paper_metadata)
+            if future_ideas_section:
+                generated_sections.append(future_ideas_section)
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            logger.warning(f"Failed to generate future ideas section: {e}")
+
         event_trace.trace_summary_event(json_summary, all_sections)
         event_trace.persist_trace(self.logs_config)
         return TaskResult(sections=generated_sections, cost=event_trace.total_cost)
+
+    def generate_future_ideas_section(
+        self, json_summary: List[Dict], query: str, event_trace, paper_metadata: Dict[str, Any]
+    ) -> GeneratedSection:
+        """Generate a future ideas section using Semantic Scholar snippet search"""
+
+        self.update_task_state("Searching for future work snippets", step_estimated_time=10)
+
+        # Extract corpus IDs from all citations in the answer
+        corpus_ids = set()
+        for section in json_summary:
+            if section.get("citations"):
+                for citation in section["citations"]:
+                    corpus_id = citation["paper"].get("corpus_id")
+                    if corpus_id:
+                        corpus_ids.add(str(corpus_id))
+
+        if not corpus_ids:
+            logger.warning("No corpus IDs found for future ideas search")
+            return None
+
+        # Search for "future work" snippets in these papers
+        future_snippets = search_future_work_snippets(list(corpus_ids), paper_metadata)
+
+        if not future_snippets:
+            logger.info("No future work snippets found")
+            return None
+
+        self.update_task_state("Generating concrete future ideas", step_estimated_time=15)
+
+        # Generate future ideas using LLM
+        future_ideas = self._generate_future_ideas_from_snippets(future_snippets, query, event_trace)
+
+        future_ideas_text = future_ideas.result
+
+        if not future_ideas_text:
+            return None
+
+        # Create GeneratedSection object
+        future_section = GeneratedSection(
+            title="Concrete Future Ideas",
+            text=future_ideas_text,
+            citations=[],  # No specific citations for this generated section
+            tldr="Possible future directions.",
+            table=None,
+        )
+
+        return future_section
+
+    def _generate_future_ideas_from_snippets(
+        self, snippets: List[Dict], original_query: str, event_trace
+    ) -> CostAwareLLMResult:
+        """Generate concrete future ideas from future work snippets using LLM"""
+
+        # Prepare snippets text with paper information
+        snippets_text = ""
+        for i, snippet_data in enumerate(snippets, 1):
+            paper = snippet_data["paper"]
+            snippet = snippet_data["snippet"]
+
+            # Format authors
+            authors_str = ""
+            if paper.get("authors"):
+                if len(paper["authors"]) > 3:
+                    authors_str = f"{paper['authors'][0].get('name', 'Unknown')} et al."
+                else:
+                    authors_str = ", ".join([author.get("name", "Unknown") for author in paper["authors"]])
+
+            snippets_text += f"\n{i}. Paper: {paper['title']}\n"
+            if authors_str:
+                snippets_text += f"   Authors: {authors_str}\n"
+            if paper.get("year"):
+                snippets_text += f"   Year: {paper['year']}\n"
+            if paper.get("venue"):
+                snippets_text += f"   Venue: {paper['venue']}\n"
+            if paper.get("abstract"):
+                # Truncate abstract to 300 characters for readability
+                abstract = paper["abstract"][:300] + "..." if len(paper["abstract"]) > 300 else paper["abstract"]
+                snippets_text += f"   Abstract: {abstract}\n"
+            snippets_text += f"   Future Work Snippet: {snippet}\n"
+
+        # Create prompt for generating future ideas
+        prompt = f"""You are tasked with generating concrete future research directions related to the query: "{original_query}"
+
+The following research papers and their future work snippets are provided as hints and context. Use them as inspiration, but can also leverage your own knowledge to generate innovative and actionable research directions.
+It is encouraged to cite prior work and position your idea against the prior work.
+
+Research Papers with Future Work Hints:
+{snippets_text}
+
+Based on the above context and your knowledge of the field, generate exactly 5-7 concrete and actionable future research directions. Each direction should be:
+
+1. Specific and well-defined (not just vague suggestions)
+2. Technically feasible with current or emerging technology
+3. Innovative and forward-thinking
+4. Directly relevant to the original research question: "{original_query}"
+5. Include specific methodologies, datasets, or approaches in line with the prior work provided above.
+
+You may draw inspiration from the provided future work snippets, but don't necessarily limit yourself to them. 
+
+Format your response as follows:
+
+## Future Research Direction 1: [Descriptive Title]
+[At least 2 paragraphs of detailed description including specific methodology, expected outcomes, and technical approach. Reference relevant papers when appropriate.]
+
+## Future Research Direction 2: [Descriptive Title]
+[At least 2 paragraphs of detailed description including specific methodology, expected outcomes, and technical approach. Reference relevant papers when appropriate.]
+
+[Continue for 5-7 directions total...]
+
+Each direction should be at least 2 paragraphs long and include concrete details. Avoid brevity.
+
+Focus on being specific about methodologies, datasets, evaluation metrics, and expected outcomes rather than providing general suggestions."""
+
+        # Use the summary generation LLM to generate future ideas
+        user_id, msg_id = self.get_user_msg_id()
+        cost_args = CostReportingArgs(
+            task_id=self.task_id,
+            description="Generating future research ideas",
+            model=self.summary_generation_llm,
+            user_id=user_id,
+            msg_id=str(uuid4()),
+        )
+
+        try:
+            llm_result = self.llm_caller.call_prompt(
+                prompt=prompt,
+                model=self.summary_generation_llm,
+                cost_args=cost_args,
+                temperature=0.7,  # Slightly higher temperature for creativity
+                max_tokens=4000,
+            )
+            return llm_result
+
+        except Exception as e:
+            logger.error(f"Error generating future ideas: {e}")
+            return None
