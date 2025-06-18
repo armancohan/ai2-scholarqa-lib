@@ -12,7 +12,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
 
-from query_scholar import load_config, setup_scholar_qa
+from query_scholar import load_config, setup_scholar_qa, AVAILABLE_MODELS
+from scholarqa.llms.constants import GPT_41_MINI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -117,8 +118,38 @@ async def read_root(request: Request):
                 pass
 
         config_names = list(configs.keys()) if configs else ["default"]
+        
+        # Prepare available models for the frontend
+        available_models = []
+        for model in sorted(AVAILABLE_MODELS):
+            # Create display names from the model strings
+            if "gpt-4" in model:
+                display_name = model.replace("openai/", "").replace("-", " ").title()
+                if "4.1" in model:
+                    display_name = display_name.replace("4.1", "4.1")
+                elif "4o" in model:
+                    display_name = display_name.replace("4O", "4o")
+            elif "claude" in model:
+                display_name = model.replace("anthropic/", "").replace("-", " ").title()
+                if "3 5" in display_name:
+                    display_name = display_name.replace("3 5", "3.5")
+            elif "llama" in model:
+                display_name = "Llama 3.1 405B (Together AI)"
+            else:
+                display_name = model
+            
+            available_models.append({
+                "value": model,
+                "display_name": display_name
+            })
+        
         logger.info(f"Serving index.html with configs: {config_names}")
-        return templates.TemplateResponse("index.html", {"request": request, "config_names": config_names})
+        return templates.TemplateResponse("index.html", {
+            "request": request, 
+            "config_names": config_names,
+            "available_models": available_models,
+            "default_model": GPT_41_MINI
+        })
     except Exception as e:
         logger.error(f"Error in read_root: {e}")
         return HTMLResponse(f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
@@ -148,6 +179,13 @@ async def process_query(message: dict, client_id: str):
         query = message["query"]
         config_name = message.get("config_name", "llm_reranker")
         inline_tags = message.get("inline_tags", False)
+        
+        # Extract model selections from the frontend
+        main_model = message.get("main_model", "")
+        decomposer_model = message.get("decomposer_model", "")
+        quote_extraction_model = message.get("quote_extraction_model", "")
+        clustering_model = message.get("clustering_model", "")
+        summary_generation_model = message.get("summary_generation_model", "")
 
         # Send initial status
         await manager.send_message({"type": "status", "step": "initializing", "message": "Loading configuration..."}, client_id)
@@ -177,15 +215,30 @@ async def process_query(message: dict, client_id: str):
 
         # Initialize ScholarQA with custom state manager for progress tracking
         custom_state_mgr = WebSocketStateMgr(client_id, manager)
+        
+        # Use user-selected models or fall back to config defaults
+        final_main_model = main_model or config.get("model")
+        final_decomposer_model = decomposer_model or config.get("decomposer_model")
+        final_quote_extraction_model = quote_extraction_model or config.get("quote_extraction_model")
+        final_clustering_model = clustering_model or config.get("clustering_model")
+        final_summary_generation_model = summary_generation_model or config.get("summary_generation_model")
+        
+        # Log the models being used
+        logger.info(f"Using models - Main: {final_main_model}, "
+                   f"Decomposer: {final_decomposer_model}, "
+                   f"Quote Extraction: {final_quote_extraction_model}, "
+                   f"Clustering: {final_clustering_model}, "
+                   f"Summary Generation: {final_summary_generation_model}")
+        
         scholar_qa = setup_scholar_qa(
             reranker_model=reranker,
             reranker_type=reranker_type,
             reranker_llm_model=config.get("reranker_llm_model"),
-            llm_model=config.get("model"),
-            decomposer_model=config.get("decomposer_model"),
-            quote_extraction_model=config.get("quote_extraction_model"),
-            clustering_model=config.get("clustering_model"),
-            summary_generation_model=config.get("summary_generation_model"),
+            llm_model=final_main_model,
+            decomposer_model=final_decomposer_model,
+            quote_extraction_model=final_quote_extraction_model,
+            clustering_model=final_clustering_model,
+            summary_generation_model=final_summary_generation_model,
             fallback_model=config.get("fallback_model"),
             table_column_model=config.get("table_column_model"),
             table_value_model=config.get("table_value_model"),

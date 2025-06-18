@@ -368,6 +368,68 @@
             </div>
 
             <div class="form-group">
+                <label for="mainModel">Main LLM Model:</label>
+                <select id="mainModel" name="mainModel">
+                    <option value="">Use config default</option>
+                    {% for model in available_models %}
+                    <option value="{{ model.value }}" {% if model.value == default_model %}selected{% endif %}>{{ model.display_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="advancedModels" style="margin-right: 8px;">
+                    Advanced Model Configuration
+                </label>
+            </div>
+
+            <div id="advancedModelSection" style="display: none; background: var(--bg-highlight); padding: 20px; border-radius: 4px; border-left: 3px solid var(--accent-primary); margin-top: 10px;">
+                <p style="margin-bottom: 15px; color: var(--content-secondary); font-size: 14px;">
+                    Configure specialized models for different processing stages. Leave blank to use the main model.
+                </p>
+                <div class="form-group">
+                    <label for="decomposerModel">Query Decomposer Model:</label>
+                    <select id="decomposerModel" name="decomposerModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="quoteExtractionModel">Quote Extraction Model:</label>
+                    <select id="quoteExtractionModel" name="quoteExtractionModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="clusteringModel">Clustering Model:</label>
+                    <select id="clusteringModel" name="clusteringModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="summaryGenerationModel">Summary Generation Model:</label>
+                    <select id="summaryGenerationModel" name="summaryGenerationModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
                 <div class="checkbox-group">
                     <input type="checkbox" id="inlineTags" name="inlineTags">
                     <label for="inlineTags">Include inline paper tags</label>
@@ -604,7 +666,12 @@
                 type: 'query',
                 query: query,
                 config_name: document.getElementById('config').value,
-                inline_tags: document.getElementById('inlineTags').checked
+                inline_tags: document.getElementById('inlineTags').checked,
+                main_model: document.getElementById('mainModel').value,
+                decomposer_model: document.getElementById('decomposerModel').value,
+                quote_extraction_model: document.getElementById('quoteExtractionModel').value,
+                clustering_model: document.getElementById('clusteringModel').value,
+                summary_generation_model: document.getElementById('summaryGenerationModel').value
             };
 
             socket.send(JSON.stringify(message));
@@ -653,6 +720,18 @@
             // Theme toggle functionality
             const themeToggle = document.getElementById('themeToggle');
             themeToggle.addEventListener('click', toggleTheme);
+            
+            // Advanced models toggle functionality
+            const advancedModelsCheckbox = document.getElementById('advancedModels');
+            const advancedModelSection = document.getElementById('advancedModelSection');
+            
+            advancedModelsCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    advancedModelSection.style.display = 'block';
+                } else {
+                    advancedModelSection.style.display = 'none';
+                }
+            });
             
             // Add loading class when processing
             const submitBtn = document.getElementById('submitBtn');
