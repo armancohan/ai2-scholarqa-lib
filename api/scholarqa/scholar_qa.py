@@ -759,15 +759,30 @@ class ScholarQA:
             logger.info("No future work snippets found")
             return None
 
-        self.update_task_state("Generating concrete future ideas", step_estimated_time=15)
+        self.update_task_state("Generating concrete future ideas iteratively", step_estimated_time=60)
 
-        # Generate future ideas using LLM
-        future_ideas = self._generate_future_ideas_from_snippets(future_snippets, query, event_trace)
-
-        future_ideas_text = future_ideas.result
-
-        if not future_ideas_text:
+        # Generate future ideas iteratively
+        future_ideas_generator = self._generate_future_ideas_iterative(future_snippets, query, event_trace, num_ideas=6)
+        
+        all_ideas = []
+        current_idea = 1
+        try:
+            while True:
+                self.update_task_state(
+                    f"Generating future idea {current_idea} of 6",
+                    step_estimated_time=10,
+                )
+                idea = next(future_ideas_generator)
+                all_ideas.append(idea)
+                current_idea += 1
+        except StopIteration as e:
+            # Generator is exhausted, get the final result
+            pass
+        
+        if not all_ideas:
             return None
+            
+        future_ideas_text = "\n\n".join(all_ideas)
 
         # Create GeneratedSection object
         future_section = GeneratedSection(
@@ -868,3 +883,66 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
         except Exception as e:
             logger.error(f"Error generating future ideas: {e}")
             return None
+
+    def _generate_future_ideas_iterative(
+        self, snippets: List[Dict], original_query: str, event_trace, num_ideas: int = 6
+    ) -> Generator[str, None, CostAwareLLMResult]:
+        """Generate future ideas iteratively, one at a time"""
+        
+        # Prepare snippets text with paper information
+        snippets_text = ""
+        for i, snippet_data in enumerate(snippets, 1):
+            paper = snippet_data["paper"]
+            snippet = snippet_data["snippet"]
+
+            # Format authors
+            authors_str = ""
+            if paper.get("authors"):
+                if len(paper["authors"]) > 3:
+                    authors_str = f"{paper['authors'][0].get('name', 'Unknown')} et al."
+                else:
+                    authors_str = ", ".join([author.get("name", "Unknown") for author in paper["authors"]])
+
+            snippets_text += f"\n{i}. Paper: {paper['title']}\n"
+            if authors_str:
+                snippets_text += f"   Authors: {authors_str}\n"
+            if paper.get("year"):
+                snippets_text += f"   Year: {paper['year']}\n"
+            if paper.get("venue"):
+                snippets_text += f"   Venue: {paper['venue']}\n"
+            if paper.get("abstract"):
+                # Truncate abstract to 300 characters for readability
+                abstract = paper["abstract"][:300] + "..." if len(paper["abstract"]) > 300 else paper["abstract"]
+                snippets_text += f"   Abstract: {abstract}\n"
+            snippets_text += f"   Future Work Snippet: {snippet}\n"
+
+        # Create cost args
+        user_id, msg_id = self.get_user_msg_id()
+        cost_args = CostReportingArgs(
+            task_id=self.task_id,
+            description="Generating future research ideas iteratively",
+            model=self.summary_generation_llm,
+            user_id=user_id,
+            msg_id=str(uuid4()),
+        )
+
+        # Use the iterative generator
+        idea_generator = self.llm_caller.call_iter_method(
+            cost_args,
+            self.multi_step_pipeline.generate_future_ideas_iterative,
+            snippets_text=snippets_text,
+            original_query=original_query,
+            num_ideas=num_ideas,
+        )
+        
+        try:
+            while True:
+                response = next(idea_generator)
+                yield response.content
+        except StopIteration as e:
+            return_val = e.value
+        
+        if return_val:
+            event_trace.add_cost(return_val.tot_cost)
+        
+        return return_val

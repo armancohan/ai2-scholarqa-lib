@@ -197,3 +197,47 @@ class MultiStepQAPipeline:
             )
             existing_sections.append(response.content)
             yield response
+
+    def generate_future_ideas_iterative(
+        self, snippets_text: str, original_query: str, num_ideas: int = 6
+    ) -> Generator[CompletionResult, None, None]:
+        """Generate future research ideas one at a time"""
+        
+        existing_ideas = []
+        
+        for i in range(num_ideas):
+            # Create prompt for generating one idea
+            already_generated = "\n\n".join([f"Idea {j+1}: {idea}" for j, idea in enumerate(existing_ideas)])
+            already_generated_text = f"\n\nPreviously generated ideas:\n{already_generated}" if existing_ideas else ""
+            
+            prompt = f"""You are tasked with generating one concrete future research direction related to the query: "{original_query}"
+
+The following research papers and their future work snippets are provided as hints and context:{already_generated_text}
+
+Research Papers with Future Work Hints:
+{snippets_text}
+
+Generate exactly ONE new concrete and actionable future research direction. This direction should be:
+
+1. Specific and well-defined (not just vague suggestions)
+2. Technically feasible with current or emerging technology
+3. Innovative and forward-thinking
+4. Directly relevant to the original research question: "{original_query}"
+5. Different from any previously generated ideas
+6. Include specific methodologies, datasets, or approaches
+
+Format your response as follows:
+
+## Future Research Direction {i+1}: [Descriptive Title]
+[At least 2 paragraphs of detailed description including specific methodology, expected outcomes, and technical approach. Reference relevant papers when appropriate.]
+
+Focus on being specific about methodologies, datasets, evaluation metrics, and expected outcomes rather than providing general suggestions."""
+
+            # Add thinking parameter for Gemini models
+            llm_kwargs = self._add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
+
+            response = llm_completion(
+                user_prompt=prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
+            )
+            existing_ideas.append(response.content)
+            yield response
