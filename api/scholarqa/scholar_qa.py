@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -30,6 +31,7 @@ from scholarqa.utils import (
     get_paper_metadata,
     get_ref_author_str,
     make_int,
+    rank_future_snippets_with_llm,
     search_future_work_snippets,
 )
 
@@ -47,6 +49,7 @@ class ScholarQA:
         paper_finder: PaperFinder,
         task_id: str = None,
         llm_model: str = None,
+        reranker_llm: str = None,
         decomposer_llm: str = None,
         quote_extraction_llm: str = None,
         clustering_llm: str = None,
@@ -72,6 +75,7 @@ class ScholarQA:
         self.paper_finder = paper_finder
         self.llm_model = llm_model or GPT_41_MINI
         self.fallback_llm = fallback_llm or GPT_41
+        self.reranker_llm = reranker_llm or self.llm_model
         self.decomposer_llm = decomposer_llm or self.llm_model
         self.quote_extraction_llm = quote_extraction_llm or self.llm_model
         self.clustering_llm = clustering_llm or self.llm_model
@@ -751,6 +755,7 @@ class ScholarQA:
         event_trace.persist_trace(self.logs_config)
         return TaskResult(sections=generated_sections, cost=event_trace.total_cost)
 
+
     def generate_future_ideas_section(
         self,
         json_summary: List[Dict],
@@ -783,6 +788,16 @@ class ScholarQA:
 
         # Search for "future work" snippets in these papers
         future_snippets = search_future_work_snippets(list(corpus_ids), paper_metadata)
+
+        # Rank and filter snippets using LLM for relevance and quality
+        if future_snippets:
+            future_snippets = rank_future_snippets_with_llm(
+                future_snippets, 
+                ideation_query, 
+                self.reranker_llm, 
+                self.fallback_llm,
+                self.update_task_state
+            )
 
         if not future_snippets:
             logger.info("No future work snippets found")
@@ -826,101 +841,6 @@ class ScholarQA:
 
         return future_section
 
-    def _generate_future_ideas_from_snippets(
-        self, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace
-    ) -> CostAwareLLMResult:
-        """Generate concrete future ideas from future work snippets using LLM"""
-
-        # Prepare snippets text with paper information
-        snippets_text = ""
-        for i, snippet_data in enumerate(snippets, 1):
-            paper = snippet_data["paper"]
-            snippet = snippet_data["snippet"]
-
-            # Format authors
-            authors_str = ""
-            if paper.get("authors"):
-                if len(paper["authors"]) > 3:
-                    authors_str = f"{paper['authors'][0].get('name', 'Unknown')} et al."
-                else:
-                    authors_str = ", ".join([author.get("name", "Unknown") for author in paper["authors"]])
-
-            snippets_text += f"\n{i}. Paper: {paper['title']}\n"
-            if authors_str:
-                snippets_text += f"   Authors: {authors_str}\n"
-            if paper.get("year"):
-                snippets_text += f"   Year: {paper['year']}\n"
-            if paper.get("venue"):
-                snippets_text += f"   Venue: {paper['venue']}\n"
-            if paper.get("abstract"):
-                # Truncate abstract to 300 characters for readability
-                abstract = paper["abstract"][:300] + "..." if len(paper["abstract"]) > 300 else paper["abstract"]
-                snippets_text += f"   Abstract: {abstract}\n"
-            snippets_text += f"   Future Work Snippet: {snippet}\n"
-
-        if ideation_instructions:
-            additional_ideation_instructions = f"""
-            Additional important instructions: {ideation_instructions}\n
-            """
-        else:
-            additional_ideation_instructions = "\n"
-
-        # Create prompt for generating future ideas
-        prompt = f"""You are tasked with generating concrete future research directions related to the query: "{ideation_query}"
-
-The following research papers and their future work snippets are provided as hints and context. Use them as inspiration, but can also leverage your own knowledge to generate innovative and actionable research directions.
-It is encouraged to cite prior work and position your idea against the prior work.
-
-Research Papers with Future Work Hints:
-{snippets_text}
-
-Based on the above context and your knowledge of the field, generate exactly 5-7 concrete and actionable future research directions. Each direction should be:
-
-1. Specific and well-defined (not just vague suggestions)
-2. Technically feasible with current or emerging technology
-3. Innovative and forward-thinking
-4. Directly relevant to the ideation research question: "{ideation_query}"
-5. Include specific methodologies, datasets, or approaches in line with the prior work provided above.
-
-You may draw inspiration from the provided future work snippets, but don't necessarily limit yourself to them. 
-{additional_ideation_instructions}
-Format your response as follows:
-
-## Future Research Direction 1: [Descriptive Title]
-[At least 2 paragraphs of detailed description including specific methodology, expected outcomes, and technical approach. Reference relevant papers when appropriate.]
-
-## Future Research Direction 2: [Descriptive Title]
-[At least 2 paragraphs of detailed description including specific methodology, expected outcomes, and technical approach. Reference relevant papers when appropriate.]
-
-[Continue for 5-7 directions total...]
-
-Each direction should be at least 2 paragraphs long and include concrete details. Avoid brevity.
-
-Focus on being specific about methodologies, datasets, evaluation metrics, and expected outcomes rather than providing general suggestions."""
-
-        # Use the summary generation LLM to generate future ideas
-        user_id, msg_id = self.get_user_msg_id()
-        cost_args = CostReportingArgs(
-            task_id=self.task_id,
-            description="Generating future research ideas",
-            model=self.summary_generation_llm,
-            user_id=user_id,
-            msg_id=str(uuid4()),
-        )
-
-        try:
-            llm_result = self.llm_caller.call_prompt(
-                prompt=prompt,
-                model=self.summary_generation_llm,
-                cost_args=cost_args,
-                temperature=0.7,  # Slightly higher temperature for creativity
-                max_tokens=4000,
-            )
-            return llm_result
-
-        except Exception as e:
-            logger.error(f"Error generating future ideas: {e}")
-            return None
 
     def _generate_future_ideas_iterative(
         self, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace, num_ideas: int = 6
@@ -932,6 +852,7 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
         for i, snippet_data in enumerate(snippets, 1):
             paper = snippet_data["paper"]
             snippet = snippet_data["snippet"]
+            snippet = snippet.replace("\n\n", "...").replace("\n", " ")
 
             # Format authors
             authors_str = ""
@@ -941,7 +862,7 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
                 else:
                     authors_str = ", ".join([author.get("name", "Unknown") for author in paper["authors"]])
 
-            snippets_text += f"\n{i}. Paper: {paper['title']}\n"
+            snippets_text += f"\n{i}. {paper['title']}\n"
             if authors_str:
                 snippets_text += f"   Authors: {authors_str}\n"
             if paper.get("year"):
@@ -949,10 +870,11 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             if paper.get("venue"):
                 snippets_text += f"   Venue: {paper['venue']}\n"
             if paper.get("abstract"):
-                # Truncate abstract to 300 characters for readability
-                abstract = paper["abstract"][:300] + "..." if len(paper["abstract"]) > 300 else paper["abstract"]
+                # TODO: hardcode for now
+                MAX_ABSTRACT_LENGTH = 2400
+                abstract = paper["abstract"][:MAX_ABSTRACT_LENGTH] + "..." if len(paper["abstract"]) > MAX_ABSTRACT_LENGTH else paper["abstract"]
                 snippets_text += f"   Abstract: {abstract}\n"
-            snippets_text += f"   Future Work Snippet: {snippet}\n"
+            snippets_text += f"   Future Work Snippet(s): {snippet}\n"
 
         # Create cost args
         user_id, msg_id = self.get_user_msg_id()

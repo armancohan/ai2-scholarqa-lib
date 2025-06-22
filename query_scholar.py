@@ -116,6 +116,7 @@ def setup_scholar_qa(
         paper_finder=paper_finder,
         logs_config=logs_config,
         llm_model=llm_model,
+        reranker_llm=reranker_llm_model,
         decomposer_llm=decomposer_model,
         quote_extraction_llm=quote_extraction_model,
         clustering_llm=clustering_model,

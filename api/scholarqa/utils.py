@@ -1,5 +1,7 @@
 import logging
+import json
 import os
+import re
 import sys
 from collections import namedtuple
 from logging import Formatter
@@ -302,6 +304,131 @@ def format_citation(paper: Dict[str, Any]) -> str:
     return citation
 
 
+def rank_future_snippets_with_llm(
+    snippets: List[Dict], ideation_query: str, ranking_llm: str, fallback_llm: str, update_task_state_callback=None
+) -> List[Dict]:
+    """Rank and filter future work snippets using LLM for relevance and quality
+
+    Processes all snippets in batches of 20 to handle large numbers efficiently.
+    """
+
+    if not snippets:
+        return snippets
+
+    if update_task_state_callback:
+        update_task_state_callback(
+            "Ranking future work snippets for quality and relevance",
+            step_estimated_time=len(snippets) // 4,  # Roughly 4 snippets per second
+        )
+
+    batch_size = 10
+    all_rankings = []
+
+    # Process snippets in batches
+    for batch_start in range(0, len(snippets), batch_size):
+        batch_end = min(batch_start + batch_size, len(snippets))
+        batch_snippets = snippets[batch_start:batch_end]
+
+        # Create prompt for this batch
+        snippets_text = ""
+        for i, snippet_data in enumerate(batch_snippets):
+            global_idx = batch_start + i + 1  # Global index across all snippets
+            current_snippet_txt = snippet_data['snippet'].replace('\n', ' ')
+            snippets_text += (
+                f"Snipet Index: [{global_idx}]\n"
+                f"Paper title: {snippet_data['paper']['title']}\n"
+                f"Year: ({snippet_data['paper']['year']})\n"
+                f"Citations: {snippet_data['paper']['citationCount']}\n"
+                f"Future Work Snippet: {current_snippet_txt}\n\n---\n\n"
+            )
+
+        ranking_prompt = f"""You are tasked with ranking future work snippets based on their relevance to the research query and quality as actionable future research directions.
+
+Research Query: "{ideation_query}"
+
+Below are {len(batch_snippets)} future work snippets from academic papers (batch {batch_start//batch_size + 1}):
+
+{snippets_text}
+
+Please evaluate each snippet and provide scores. Focus on the snippet itself and not the paper. Consider:
+
+1. **Relevance**: Is this actually a future work suggestion? How closely related is it to the research query?
+2. **Specificity**: Does it suggest concrete, actionable research directions (not vague "more research needed")?
+3. **Innovation Potential**: Does it identify gaps/limitations that could lead to novel research?
+4. **Technical Depth**: Does it provide enough technical detail to inspire concrete research ideas or it is vague?
+
+Again, you should evaluate the snippet itself and not the paper it comes from. We only have the snippet text and not the paper.
+
+Return ONLY a JSON array with evaluations for ALL snippets in this batch.
+Do not be too much biased by length of the snippet or the number of citations.
+Do not include any explanatory text before or after the JSON.
+
+Required format for each snippet:
+- "snippet_index": the index from the list above ({batch_start + 1}-{batch_end})
+- "score": score from 0-10 for overall quality and relevance
+- "reason": brief explanation (1 sentence) for the score
+
+Guidelines:
+- Do not be biased by length of the snippet or the number of citations
+- Newer papers (2024+) are slightly preferred over older papers (2023 or earlier)
+- Score 0: Not a future work suggestion at all
+- Score 1-2: Very vague or irrelevant
+- Score 3-4: Overly general statement about future work.
+- Score 5-7: Moderately relevant and specific but difficult to build on
+- Score 8-9: Highly relevant with good technical detail
+- Score 10: Exceptional relevance and specificity
+
+Example output format:
+```json
+[
+  {{"snippet_index": {batch_start + 4}, "score": 9, "reason": "Highly relevant with sufficient technical description."}},
+  {{"snippet_index": {batch_start + 2}, "score": 3, "reason": "Too vague, lacks specific directions."}},
+  {{"snippet_index": {batch_start + 6}, "score": 0, "reason": "Not a future work suggestion."}}
+]
+```"""
+
+        try:
+            from scholarqa.llms.litellm_helper import llm_completion
+
+            response = llm_completion(
+                user_prompt=ranking_prompt, model=ranking_llm, fallback=fallback_llm, max_tokens=4096, temperature=0.1
+            )
+            import ipdb; ipdb.set_trace()
+            # Parse the JSON response
+            batch_rankings = extract_json_from_response(response.content)
+            if batch_rankings and isinstance(batch_rankings, list):
+                all_rankings.extend(batch_rankings)
+            else:
+                logger.warning(f"Invalid JSON response from batch {batch_start//batch_size + 1}")
+
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            logger.warning(f"Error ranking batch {batch_start//batch_size + 1}: {e}. " f"Skipping batch.")
+            continue
+
+    if not all_rankings:
+        logger.warning("No successful rankings. Falling back to citation-based ranking.")
+        return sorted(snippets, key=lambda x: x["paper"]["citationCount"], reverse=True)
+
+    # TODO: hardcode warning for now
+    high_quality_rankings = [r for r in all_rankings if r.get("score", 0) >= 5]
+    high_quality_rankings.sort(key=lambda x: x["score"], reverse=True)
+
+    # Build final ranked snippets list
+    ranked_snippets = []
+    for ranking in high_quality_rankings:
+        snippet_idx = ranking["snippet_index"] - 1  # Convert to 0-based
+        if 0 <= snippet_idx < len(snippets):
+            snippet = snippets[snippet_idx].copy()
+            snippet["quality_score"] = ranking["score"]
+            snippet["ranking_reason"] = ranking["reason"]
+            ranked_snippets.append(snippet)
+    logger.info(f"LLM ranked {len(ranked_snippets)}/{len(snippets)} high-quality snippets")
+    return ranked_snippets
+
+
 def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str, Any] = None) -> List[Dict]:
     """Search for future work snippets using Semantic Scholar snippet search API
 
@@ -366,9 +493,9 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
             corpus_id = snippet_data["matched_corpus_id"]
             paper_info = paper_metadata.get(corpus_id, {})
 
-            # Only include papers with at least 2 citations
+            # Only include papers with at least 1 citations
             citation_count = paper_info.get("citationCount", 0)
-            if citation_count >= 2:  # TODO: hardcode warning for now
+            if citation_count >= 1:  # TODO: hardcode warning for now
                 snippet_with_paper = {
                     "snippet": snippet_data["snippet"],
                     "search_term": snippet_data["search_term"],
@@ -391,3 +518,56 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
     # unique_snippets = unique_snippets[:20]
 
     return unique_snippets
+
+
+def extract_json_from_response(content: str) -> Union[List[Dict], Dict[str, Any], None]:
+    """Extract JSON from LLM response, handling both plain JSON and markdown code blocks"""
+    
+    if not content:
+        return None
+    
+    try:
+        # First, try to find JSON within markdown code blocks
+        json_pattern = r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```'
+        json_matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
+        
+        if json_matches:
+            # Try to parse the first JSON match
+            for match in json_matches:
+                try:
+                    return json.loads(match.strip())
+                except json.JSONDecodeError:
+                    continue
+        
+        # If no markdown blocks found, try to find raw JSON
+        # Look for array or object patterns
+        array_pattern = r'\[.*?\]'
+        object_pattern = r'\{.*?\}'
+        
+        # Try array first (our expected format)
+        array_matches = re.findall(array_pattern, content, re.DOTALL)
+        for match in array_matches:
+            try:
+                parsed = json.loads(match.strip())
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        
+        # Try object
+        object_matches = re.findall(object_pattern, content, re.DOTALL)
+        for match in object_matches:
+            try:
+                parsed = json.loads(match.strip())
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+        
+        # Last resort: try to parse the entire content
+        return json.loads(content.strip())
+        
+    except Exception as e:
+        logger.warning(f"Failed to extract JSON from response: {e}")
+        logger.debug(f"Response content: {content[:500]}...")
+        return None

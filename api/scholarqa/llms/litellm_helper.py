@@ -104,6 +104,7 @@ def batch_llm_completion(
         trim_messages([{"role": "system", "content": system_prompt}, {"role": "user", "content": msg}], model)
         for msg in messages
     ]
+    llm_lite_params = add_gemini_thinking_if_needed(model, llm_lite_params)
     responses = litellm.completion_with_retries(
         messages=messages, model=model, original_function=litellm.batch_completion, **llm_lite_params
     )
@@ -137,6 +138,7 @@ def llm_completion(user_prompt: str, system_prompt: str = None, fallback=GPT_41,
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_prompt})
+    llm_lite_params = add_gemini_thinking_if_needed(llm_lite_params.get("model"), llm_lite_params)
     response = litellm.completion_with_retries(messages=messages, **llm_lite_params)
     try:
         res_cost = round(litellm.completion_cost(response), 6)
