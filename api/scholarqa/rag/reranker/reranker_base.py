@@ -4,6 +4,7 @@ import math
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
+from scholarqa.llms.litellm_helper import add_gemini_thinking_if_needed
 
 import requests
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -423,8 +424,7 @@ class LLMReranker(AbstractReranker):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.llm_kwargs = {"max_tokens": max_tokens, "temperature": temperature, **llm_kwargs}
-        # if "gemini" in model:  # TODO: better way to handle this
-        #     self.llm_kwargs["thinking"] = {"type": "false"}
+        self.llm_kwargs = add_gemini_thinking_if_needed(model, self.llm_kwargs)
 
         # System prompt for relevance scoring
         self.system_prompt = """You are an reserach scientist and expert at judging the relevance of scientific papers to research queries. Your task is to evaluate whether a scientific paper (abstract or paper snippets) addresses the given research query and provide a relevance score.
@@ -496,6 +496,8 @@ Relevance Score:"""
             logger.debug(f"Scored document (raw: {raw_score}/10, normalized: {score:.3f}): {document[:100]}...")
             return score
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(f"Error scoring document: {e}")
             return 0.0
 
@@ -515,6 +517,8 @@ Relevance Score:"""
             logger.debug(f"Batch scored {len(documents)} documents")
             return scores
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(f"Error in batch scoring: {e}, falling back to individual scoring")
             # Fallback to individual scoring
             return [self.score_single_document(query, doc) for doc in documents]

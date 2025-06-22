@@ -83,7 +83,7 @@ def setup_scholar_qa(
     # Initialize the reranker based on type
     if reranker_type == "llm":
         # Use LLM-based reranker
-        reranker = LLMReranker(model=reranker_llm_model or GPT_41_MINI, use_batch=True, max_tokens=10, temperature=0.0)
+        reranker = LLMReranker(model=reranker_llm_model, use_batch=True, temperature=0.0)
     elif reranker_type == "qwen_vllm":
         # Use QWEN VLLM reranker (default)
         reranker = QWENRerankerVLLM(model_name=reranker_model)
