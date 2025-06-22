@@ -5,12 +5,14 @@ import json
 import logging
 import os
 from datetime import datetime
+from time import time
 from typing import Dict
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from scholarqa.llms.constants import GEMINI_25_FLASH
+from scholarqa.models import AsyncTaskState, TaskStep
 from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
 from scholarqa.utils import format_citation
 
@@ -58,11 +60,31 @@ class WebSocketStateMgr(LocalStateMgrClient):
         super().__init__(logs_dir)
         self.client_id = client_id
         self.connection_manager = connection_manager
+        self.initialized_tasks = set()  # Track which tasks we've initialized
         # Store the current event loop for later use
         try:
             self.event_loop = asyncio.get_running_loop()
         except RuntimeError:
             self.event_loop = None
+
+    def _ensure_task_initialized(self, task_id: str):
+        """Initialize task state if it doesn't exist"""
+        if task_id not in self.initialized_tasks:
+            try:
+                # Try to read the task state first
+                self.state_mgr.read_state(task_id)
+            except Exception:
+                # Task doesn't exist, create it
+                logger.info(f"Initializing task state for {task_id}")
+                task_state = AsyncTaskState(
+                    task_id=task_id,
+                    estimated_time="~5 minutes",
+                    task_status="Processing",
+                    task_result=None,
+                    extra_state={"steps": [], "start": time()},
+                )
+                self.state_mgr.write_state(task_state)
+            self.initialized_tasks.add(task_id)
 
     def update_task_state(
         self,
@@ -97,13 +119,17 @@ class WebSocketStateMgr(LocalStateMgrClient):
         else:
             logger.warning(f"No event loop available, cannot send progress: {status}")
 
+        # Ensure task is initialized before calling parent method
+        self._ensure_task_initialized(task_id)
+        
         # Also call parent method to maintain state
         try:
             super().update_task_state(task_id, tool_request, status, step_estimated_time, curr_response, task_estimated_time)
         except Exception as e:
+            # If there's still an error, log it as a warning but don't fail
             import traceback
             traceback.print_exc()
-            logger.warning(f"Error calling parent update_task_state: {e}")
+            logger.warning(f"Error in parent update_task_state: {e}")
 
 
 @app.get("/", response_class=HTMLResponse)

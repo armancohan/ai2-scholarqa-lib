@@ -387,7 +387,7 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
     # Sort by citation count in descending order (highest citations first)
     unique_snippets.sort(key=lambda x: x["paper"]["citationCount"], reverse=True)
 
-    # Limit to 20 snippets
-    unique_snippets = unique_snippets[:20]
+    # # Limit to 20 snippets
+    # unique_snippets = unique_snippets[:20]
 
     return unique_snippets

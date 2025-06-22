@@ -167,5 +167,5 @@ def add_gemini_thinking_if_needed(model: str, kwargs: Dict[str, Any]) -> Dict[st
         kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
     if model and "gemini-2.5-pro" in model.lower():
         kwargs = kwargs.copy()
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
     return kwargs

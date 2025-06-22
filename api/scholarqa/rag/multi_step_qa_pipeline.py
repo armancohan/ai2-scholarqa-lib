@@ -61,10 +61,13 @@ class MultiStepQAPipeline:
         self.summary_generation_llm = summary_generation_llm or self.llm_model
         self.fallback_llm = fallback_llm
         self.batch_workers = batch_workers
-        self.task_id = task_id
-        self.llm_kwargs = {"max_tokens": 4096 * 4}
+        self.task_id = task_id  # Will be updated by the ScholarQA class
+        self.llm_kwargs = {"max_tokens": 4096 * 8}
         if llm_kwargs:
             self.llm_kwargs.update(llm_kwargs)
+
+    def update_task_id(self, task_id: str):
+        self.task_id = task_id
 
     def _save_prompt_to_outputs(self, prompt: str, section_name: str = "section", step_number: int = 0) -> None:
         """
@@ -106,6 +109,9 @@ class MultiStepQAPipeline:
             logger.info(f"Prompt saved to: {filepath}")
 
         except Exception as e:
+            import traceback
+
+            traceback.print_exc()
             logger.warning(f"Failed to save prompt to outputs directory: {e}")
 
     def step_select_quotes(
@@ -285,6 +291,9 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             # Add thinking parameter for Gemini models
             llm_kwargs = add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
 
+            # Save the prompt before calling the LLM
+            self._save_prompt_to_outputs(prompt, "future_ideas", i)
+
             response = llm_completion(
                 user_prompt=prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
             )
@@ -359,7 +368,7 @@ Note: Be very critical about the proposal.
 
 **Revised Research Idea:** 
 Finally, you need to revise the research idea based on the evaluation. Be very careful and concrete.
-[Explain concretely what is the revised research idea in 3-4 paragraphs. Important: This should be 3-4 paragraphs not shorter. If the proposal is not savable, say so.]
+[Explain concretely what is the revised research idea in 3-4 paragraphs. Important: This should be 3-4 paragraphs not shorter. Use latex citation format. If the proposal is not savable, say so.]
 
 """
 
