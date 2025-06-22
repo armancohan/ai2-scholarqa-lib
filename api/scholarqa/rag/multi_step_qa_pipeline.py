@@ -202,9 +202,9 @@ class MultiStepQAPipeline:
         self, snippets_text: str, ideation_query: str, ideation_instructions: str, num_ideas: int = 6
     ) -> Generator[CompletionResult, None, None]:
         """Generate future research ideas one at a time"""
-        
+
         existing_ideas = []
-        
+
         for i in range(num_ideas):
             # Create prompt for generating one idea
             already_generated = "\n\n".join([f"Idea {j+1}: {idea}" for j, idea in enumerate(existing_ideas)])
@@ -227,11 +227,12 @@ Research Papers with Future Work Hints:
 Generate exactly ONE new concrete and actionable future research direction. This direction should be:
 
 1. Specific and well-defined (not just vague suggestions)
-2. Technically feasible with current or emerging technology
-3. Innovative and forward-thinking
-4. Directly relevant to the ideation research question: "{ideation_query}"
+2. Technically feasible with reasonable budget and resources. For example: we don't want large pretraining experiments, or large data annotations.
+3. Innovative and forward-thinking. Ideally something that is less obvious and more interesting. You can take inspiration from the context provided and the Future Work snippets in the contex.
+4. Relevant to the ideation research question: "{ideation_query}"
 5. Different from any previously generated ideas
-6. Include specific methodologies, datasets, or approaches
+6. Include specific methodologies, approaches
+7. Include specific datasets, evaluation metrics, and expected outcomes using the context provided. Look for appropriate datasets and evaluation methods.
 {additional_ideation_instructions}
 Format your response as follows:
 
@@ -246,15 +247,15 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             response = llm_completion(
                 user_prompt=prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
             )
-            
+
             # Evaluate the generated idea
             evaluation = self.evaluate_research_idea(response.content, ideation_query, snippets_text)
-            
+
             # Combine idea with evaluation
             idea_with_evaluation = f"{response.content}\n\n### Idea Evaluation\n{evaluation.content}"
-            
+
             existing_ideas.append(idea_with_evaluation)
-            
+
             # Create a new response object with the combined content
             combined_response = CompletionResult(
                 content=idea_with_evaluation,
@@ -262,65 +263,70 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
                 cost=response.cost + evaluation.cost,
                 input_tokens=response.input_tokens + evaluation.input_tokens,
                 output_tokens=response.output_tokens + evaluation.output_tokens,
-                total_tokens=response.total_tokens + evaluation.total_tokens
+                total_tokens=response.total_tokens + evaluation.total_tokens,
             )
-            
+
             yield combined_response
 
     def evaluate_research_idea(self, idea_text: str, ideation_query: str, context_snippets: str) -> CompletionResult:
         """Evaluate the quality and feasibility of a generated research idea"""
-        
-        evaluation_prompt = f"""You are an expert research evaluator tasked with assessing the quality of a proposed research direction. 
+
+        evaluation_prompt = f"""You are an expert research scientist tasked with evaluating the quality of a proposed research direction. You are very critical, careful, and thorough. You do not like vague and high-level ideas and what people propose should be concretely described and not something already similar to what is out there.
+
+You are given a topic or query on which the research idea is based on.
+Then you are given a list of research papers and snippets that are relevant to the topic.
+Then you are given a proposed research idea.
+
+You need to evaluate the quality of the proposed research idea across the following dimensions and provide a comprehensive assessment.
+Then you need to revise the proposed research idea based on the evaluation.
+If the proposal is not savable, you need to say so.
+
+See the sections below.
 
 Original Research Query: "{ideation_query}"
 
 Research Context (relevant papers and snippets):
-{context_snippets[:1500]}...  
+{context_snippets}
+
+-------------------------------------
+-------------------------------------
 
 Proposed Research Idea:
 {idea_text}
 
-Please evaluate this research idea across the following dimensions and provide a comprehensive assessment:
+Please evaluate and revise this research idea across the following dimensions and provide a comprehensive assessment:
 
 ## Evaluation Criteria:
 
-1. **Novelty & Innovation** (1-10): How novel and innovative is this idea? Does it introduce new concepts or approaches?
+1. **Novelty and Innovation** (1-10): How novel and innovative is this idea compared with existing research and what was described above? Does it introduce new concepts or approaches?
+Note: If the proposal includes "attention mechanism", it is probably is useless idea. 
 
-2. **Technical Feasibility** (1-10): How technically feasible is this research with current or near-future technology?
+2. **Clarity, concreteness, and Specificity** (1-10): How clear and specific are the proposed methods and expected outcomes? Or it is vague and high-level?
 
-3. **Scientific Rigor** (1-10): How well-grounded is the methodology? Are the proposed approaches scientifically sound?
-
-4. **Impact Potential** (1-10): What is the potential impact of this research on the field?
-
-5. **Relevance to Query** (1-10): How well does this idea address the original research question?
-
-6. **Clarity & Specificity** (1-10): How clear and specific are the proposed methods and expected outcomes?
+3. **Technical Feasibility** (1-10): In terms of executing on the idea, experiments needed to run, concrete evaluation methodology, how feasible is the proposal?
 
 ## Format your evaluation as follows:
 
-**Overall Score: X/60**
-
-**Strengths:**
-- [List 2-3 key strengths]
+**Overall Score: X/30**
 
 **Weaknesses:**
 - [List 2-3 key weaknesses or areas for improvement]
 
-**Recommendations:**
-- [Provide 1-2 specific recommendations to improve this research direction]
-
 **Final Assessment:** [1-2 sentences summarizing whether this is a strong research direction and why]
 
-Be critical but constructive in your evaluation. Focus on providing actionable feedback."""
+Note: Be very critical about the proposal.
+
+**Revised Research Idea:** 
+Finally, you need to revise the research idea based on the evaluation. Be very careful and concrete.
+[Explain concretely what is the revised research idea in 3-4 paragraphs. Important: This should be 3-4 paragraphs not shorter. If the proposal is not savable, say so.]
+
+"""
 
         # Add thinking parameter for Gemini models
         llm_kwargs = self._add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
 
         evaluation_response = llm_completion(
-            user_prompt=evaluation_prompt, 
-            model=self.summary_generation_llm, 
-            fallback=self.fallback_llm, 
-            **llm_kwargs
+            user_prompt=evaluation_prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
         )
-        
+
         return evaluation_response
