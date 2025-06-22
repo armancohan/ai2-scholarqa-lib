@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from enum import Enum
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -7,7 +8,7 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 import pandas as pd
 from pydantic import BaseModel, Field
 from scholarqa.llms.constants import GPT_41
-from scholarqa.llms.litellm_helper import batch_llm_completion, llm_completion
+from scholarqa.llms.litellm_helper import add_gemini_thinking_if_needed, batch_llm_completion, llm_completion
 from scholarqa.llms.prompts import (
     PROMPT_ASSEMBLE_NO_QUOTES_SUMMARY,
     USER_PROMPT_PAPER_LIST_FORMAT,
@@ -50,6 +51,7 @@ class MultiStepQAPipeline:
         summary_generation_llm: str = None,
         fallback_llm: str = GPT_41,
         batch_workers: int = 20,
+        task_id: str = None,
         **llm_kwargs,
     ):
         # Use llm_model as default for all steps if specific models not provided
@@ -59,16 +61,52 @@ class MultiStepQAPipeline:
         self.summary_generation_llm = summary_generation_llm or self.llm_model
         self.fallback_llm = fallback_llm
         self.batch_workers = batch_workers
+        self.task_id = task_id
         self.llm_kwargs = {"max_tokens": 4096 * 4}
         if llm_kwargs:
             self.llm_kwargs.update(llm_kwargs)
 
-    def _add_gemini_thinking_if_needed(self, model: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Add thinking parameter for Gemini models"""
-        if model and "gemini-pro" in model.lower():
-            kwargs = kwargs.copy()
-            # kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}  # TODO: uncomment this
-        return kwargs
+    def _save_prompt_to_outputs(self, prompt: str, section_name: str = "section", step_number: int = 0) -> None:
+        """
+        Elegantly save the prompt to outputs directory with task_id-based naming.
+
+        Args:
+            prompt: The prompt text to save
+            section_name: Name of the section being generated
+            step_number: Sequential number for multiple sections
+        """
+        if not self.task_id:
+            logger.warning("No task_id available, skipping prompt save")
+            return
+
+        try:
+            # Create outputs directory if it doesn't exist
+            outputs_dir = "outputs"
+            os.makedirs(outputs_dir, exist_ok=True)
+
+            # Clean section name for filename
+            clean_section_name = re.sub(r"[^\w\-_\.]", "_", section_name.lower())
+
+            # Create filename with task_id, section name, and step number
+            filename = f"{self.task_id}_prompt_{clean_section_name}_step_{step_number:02d}.txt"
+            filepath = os.path.join(outputs_dir, filename)
+
+            # Save the prompt with metadata
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(f"# Task ID: {self.task_id}\n")
+                f.write(f"# Section: {section_name}\n")
+                f.write(f"# Step: {step_number}\n")
+                f.write(f"# Model: {self.summary_generation_llm}\n")
+                f.write(f"# Generated at: {pd.Timestamp.now().isoformat()}\n")
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("# PROMPT CONTENT\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(prompt)
+
+            logger.info(f"Prompt saved to: {filepath}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save prompt to outputs directory: {e}")
 
     def step_select_quotes(
         self, query: str, scored_df: pd.DataFrame, sys_prompt: str
@@ -87,7 +125,7 @@ class MultiStepQAPipeline:
         messages = [USER_PROMPT_PAPER_LIST_FORMAT.format(query, content) for content in paper_contents]
 
         # Add thinking parameter for Gemini models
-        llm_kwargs = self._add_gemini_thinking_if_needed(self.quote_extraction_llm, self.llm_kwargs)
+        llm_kwargs = add_gemini_thinking_if_needed(self.quote_extraction_llm, self.llm_kwargs)
 
         # Get quote extractions from the LLM.
         completion_results = batch_llm_completion(
@@ -136,7 +174,7 @@ class MultiStepQAPipeline:
         user_prompt = make_prompt(query, per_paper_summaries)
         try:
             # Add thinking parameter for Gemini models
-            llm_kwargs = self._add_gemini_thinking_if_needed(self.clustering_llm, self.llm_kwargs)
+            llm_kwargs = add_gemini_thinking_if_needed(self.clustering_llm, self.llm_kwargs)
 
             # params for reasoning mode: max_completion_tokens=4096, max_tokens=4096+1024, reasoning_effort="low"
             response = llm_completion(
@@ -189,8 +227,11 @@ class MultiStepQAPipeline:
                 logger.warning(f"No quotes for section {section_name}")
                 filled_in_prompt = PROMPT_ASSEMBLE_NO_QUOTES_SUMMARY.format(**fill_in_prompt_args)
 
+            # Save the prompt before calling the LLM
+            self._save_prompt_to_outputs(filled_in_prompt, section_name, i)
+
             # Add thinking parameter for Gemini models
-            llm_kwargs = self._add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
+            llm_kwargs = add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
 
             response = llm_completion(
                 user_prompt=filled_in_prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
@@ -242,7 +283,7 @@ Format your response as follows:
 Focus on being specific about methodologies, datasets, evaluation metrics, and expected outcomes rather than providing general suggestions."""
 
             # Add thinking parameter for Gemini models
-            llm_kwargs = self._add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
+            llm_kwargs = add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
 
             response = llm_completion(
                 user_prompt=prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
@@ -323,7 +364,7 @@ Finally, you need to revise the research idea based on the evaluation. Be very c
 """
 
         # Add thinking parameter for Gemini models
-        llm_kwargs = self._add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
+        llm_kwargs = add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
 
         evaluation_response = llm_completion(
             user_prompt=evaluation_prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs

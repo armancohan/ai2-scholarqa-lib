@@ -95,10 +95,14 @@ class ScholarQA:
                 clustering_llm=self.clustering_llm,
                 summary_generation_llm=self.summary_generation_llm,
                 fallback_llm=self.fallback_llm,
+                task_id=self.task_id,
                 **self.llm_kwargs,
             )
         else:
             self.multi_step_pipeline = multi_step_pipeline
+            # Update the task_id in case it was provided externally
+            if hasattr(self.multi_step_pipeline, 'task_id'):
+                self.multi_step_pipeline.task_id = self.task_id
 
         self.tool_request = None
         self.table_generator = TableGenerator(paper_finder=paper_finder, llm_caller=self.llm_caller)

@@ -406,7 +406,7 @@
                 <label for="config">Configuration:</label>
                 <select id="config" name="config">
                     {% for config_name in config_names %}
-                    <option value="{{ config_name }}">{{ config_name }}</option>
+                    <option value="{{ config_name }}" {% if config_name == "llm_reranker" %}selected{% endif %}>{{ config_name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -423,12 +423,12 @@
 
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="advancedModels" style="margin-right: 8px;">
+                    <input type="checkbox" id="advancedModels" style="margin-right: 8px;" checked>
                     Advanced Model Configuration
                 </label>
             </div>
 
-            <div id="advancedModelSection" style="display: none; background: var(--bg-highlight); padding: 20px; border-radius: 4px; border-left: 3px solid var(--accent-primary); margin-top: 10px;">
+            <div id="advancedModelSection" style="display: block; background: var(--bg-highlight); padding: 20px; border-radius: 4px; border-left: 3px solid var(--accent-primary); margin-top: 10px;">
                 <p style="margin-bottom: 15px; color: var(--content-secondary); font-size: 14px;">
                     Configure specialized models for different processing stages. Leave blank to use the main model.
                 </p>
@@ -437,7 +437,7 @@
                     <select id="decomposerModel" name="decomposerModel">
                         <option value="">Use main model</option>
                         {% for model in available_models %}
-                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -447,7 +447,7 @@
                     <select id="quoteExtractionModel" name="quoteExtractionModel">
                         <option value="">Use main model</option>
                         {% for model in available_models %}
-                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -457,7 +457,7 @@
                     <select id="clusteringModel" name="clusteringModel">
                         <option value="">Use main model</option>
                         {% for model in available_models %}
-                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -467,7 +467,17 @@
                     <select id="summaryGenerationModel" name="summaryGenerationModel">
                         <option value="">Use main model</option>
                         {% for model in available_models %}
-                        <option value="{{ model.value }}">{{ model.display_name }}</option>
+                        <option value="{{ model.value }}" {% if model.value == "anthropic/claude-sonnet-4-20250514" %}selected{% endif %}>{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="rerankerLlmModel">Reranker LLM Model:</label>
+                    <select id="rerankerLlmModel" name="rerankerLlmModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -725,7 +735,8 @@
                 decomposer_model: document.getElementById('decomposerModel').value,
                 quote_extraction_model: document.getElementById('quoteExtractionModel').value,
                 clustering_model: document.getElementById('clusteringModel').value,
-                summary_generation_model: document.getElementById('summaryGenerationModel').value
+                summary_generation_model: document.getElementById('summaryGenerationModel').value,
+                reranker_llm_model: document.getElementById('rerankerLlmModel').value
             };
 
             socket.send(JSON.stringify(message));

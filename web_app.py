@@ -10,7 +10,7 @@ from typing import Dict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from scholarqa.llms.constants import GPT_41_MINI
+from scholarqa.llms.constants import GEMINI_25_FLASH
 from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
 from scholarqa.utils import format_citation
 
@@ -101,6 +101,8 @@ class WebSocketStateMgr(LocalStateMgrClient):
         try:
             super().update_task_state(task_id, tool_request, status, step_estimated_time, curr_response, task_estimated_time)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.warning(f"Error calling parent update_task_state: {e}")
 
 
@@ -148,7 +150,7 @@ async def read_root(request: Request):
                 "request": request,
                 "config_names": config_names,
                 "available_models": available_models,
-                "default_model": GPT_41_MINI,
+                "default_model": GEMINI_25_FLASH,
             },
         )
     except Exception as e:
@@ -189,6 +191,7 @@ async def process_query(message: dict, client_id: str):
         quote_extraction_model = message.get("quote_extraction_model", "")
         clustering_model = message.get("clustering_model", "")
         summary_generation_model = message.get("summary_generation_model", "")
+        reranker_llm_model = message.get("reranker_llm_model", "")
 
         # Send initial status
         await manager.send_message({"type": "status", "step": "initializing", "message": "Loading configuration..."}, client_id)
@@ -225,6 +228,7 @@ async def process_query(message: dict, client_id: str):
         final_quote_extraction_model = quote_extraction_model or config.get("quote_extraction_model")
         final_clustering_model = clustering_model or config.get("clustering_model")
         final_summary_generation_model = summary_generation_model or config.get("summary_generation_model")
+        final_reranker_llm_model = reranker_llm_model or config.get("reranker_llm_model")
 
         # Log the models being used
         logger.info(
@@ -232,13 +236,14 @@ async def process_query(message: dict, client_id: str):
             f"Decomposer: {final_decomposer_model}, "
             f"Quote Extraction: {final_quote_extraction_model}, "
             f"Clustering: {final_clustering_model}, "
-            f"Summary Generation: {final_summary_generation_model}"
+            f"Summary Generation: {final_summary_generation_model}, "
+            f"Reranker LLM: {final_reranker_llm_model}"
         )
 
         scholar_qa = setup_scholar_qa(
             reranker_model=reranker,
             reranker_type=reranker_type,
-            reranker_llm_model=config.get("reranker_llm_model"),
+            reranker_llm_model=final_reranker_llm_model,
             llm_model=final_main_model,
             decomposer_model=final_decomposer_model,
             quote_extraction_model=final_quote_extraction_model,

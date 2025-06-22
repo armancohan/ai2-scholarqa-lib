@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Callable, Generator, Iterator, List, Tuple, Union
+from typing import Any, Callable, Dict, Generator, Iterator, List, Tuple, Union
 
 import litellm
 from dotenv import load_dotenv
@@ -158,3 +158,14 @@ def llm_completion(user_prompt: str, system_prompt: str = None, fallback=GPT_41,
         total_tokens=res_usage.total_tokens,
     )
     return cost_tuple
+
+
+def add_gemini_thinking_if_needed(model: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Add thinking parameter for Gemini models"""
+    if model and "gemini-2.5-flash" in model.lower():
+        kwargs = kwargs.copy()
+        kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+    if model and "gemini-2.5-pro" in model.lower():
+        kwargs = kwargs.copy()
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": 1024}
+    return kwargs
