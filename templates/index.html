@@ -260,6 +260,31 @@
             font-weight: 500;
         }
 
+        .save-btn {
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .save-btn:hover {
+            background: var(--accent-secondary);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px var(--shadow-color);
+        }
+
+        .save-btn:active {
+            transform: translateY(0);
+        }
+
         .results-content {
             background: var(--bg-base);
             border: 1px solid var(--border-color);
@@ -356,6 +381,25 @@
                     name="query" 
                     placeholder="Enter your scientific research question here..."
                     required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="ideationQuery">Future Ideas Query (optional):</label>
+                <textarea 
+                    id="ideationQuery" 
+                    name="ideationQuery" 
+                    placeholder="Enter a specific question for generating future research directions (if different from main query). Leave blank to use the main research question."
+                    style="min-height: 80px;"></textarea>
+            </div>
+
+
+            <div class="form-group">
+                <label for="ideationInstructions">LLM instructions for future ideas (Optional)</label>
+                <textarea 
+                    id="ideationInstructions" 
+                    name="ideationInstructions" 
+                    placeholder="Enter a specific instructions for generating future research directions."
+                    style="min-height: 80px;"></textarea>
             </div>
 
             <div class="form-group">
@@ -457,7 +501,12 @@
         <div id="resultsSection" class="results-section">
             <div class="results-header">
                 <div class="results-title">Results</div>
-                <div class="cost-info" id="costInfo"></div>
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <div class="cost-info" id="costInfo"></div>
+                    <button id="saveBtn" class="save-btn" title="Save results to file">
+                        💾 Save Results
+                    </button>
+                </div>
             </div>
             <div class="results-content" id="resultsContent"></div>
         </div>
@@ -478,6 +527,7 @@
         const resultsContent = document.getElementById('resultsContent');
         const costInfo = document.getElementById('costInfo');
         const errorMessage = document.getElementById('errorMessage');
+        const saveBtn = document.getElementById('saveBtn');
 
         const steps = {
             'initializing': { text: 'Initializing system...', progress: 20, step: '1 of 5' },
@@ -662,9 +712,13 @@
             stepIndicator.textContent = 'Step 1 of 5';
 
             // Send query
+            const ideationQueryValue = document.getElementById('ideationQuery').value.trim();
+            const ideationInstructionsValue = document.getElementById('ideationInstructions').value.trim();
             const message = {
                 type: 'query',
                 query: query,
+                ideation_query: ideationQueryValue || null,
+                ideation_instructions: ideationInstructionsValue || null,
                 config_name: document.getElementById('config').value,
                 inline_tags: document.getElementById('inlineTags').checked,
                 main_model: document.getElementById('mainModel').value,
@@ -675,6 +729,35 @@
             };
 
             socket.send(JSON.stringify(message));
+        });
+
+        // Save button functionality
+        saveBtn.addEventListener('click', function() {
+            const content = resultsContent.textContent;
+            if (!content) {
+                alert('No results to save!');
+                return;
+            }
+
+            // Create a timestamp for the filename
+            const now = new Date();
+            const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const filename = `scholarqa-results-${timestamp}.txt`;
+
+            // Create a blob with the content
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+
+            // Create a temporary link and trigger download
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+
+            // Clean up
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
         });
 
         // Initialize WebSocket connection when page loads

@@ -517,11 +517,25 @@ class ScholarQA:
     def postprocess_json_output(self, json_summary: List[Dict[str, Any]], **kwargs) -> None:
         pass
 
-    def answer_query(self, query: str, inline_tags: bool = True, output_format: str = None) -> Dict[str, Any]:
+    def answer_query(
+        self,
+        query: str,
+        inline_tags: bool = True,
+        output_format: str = None,
+        ideation_query: str = None,
+        ideation_instructions: str = None,
+    ) -> Dict[str, Any]:
         task_id = str(uuid4())
         self.logs_config.task_id = task_id
         logger.info("New task")
-        tool_request = ToolRequest(task_id=task_id, query=query, user_id="lib_user", output_format=output_format)
+        tool_request = ToolRequest(
+            task_id=task_id,
+            query=query,
+            user_id="lib_user",
+            output_format=output_format,
+            ideation_query=ideation_query,
+            ideation_instructions=ideation_instructions,
+        )
         try:
             task_result = self.run_qa_pipeline(tool_request, inline_tags)
         except Exception as e:
@@ -597,6 +611,8 @@ class ScholarQA:
         user_id, msg_id = self.get_user_msg_id()
         msg_id = task_id if not msg_id else msg_id
         query = req.query
+        ideation_query = req.ideation_query
+        ideation_instructions = req.ideation_instructions
         logger.info(f"Received query: {query} from user_id: {user_id} with opt_in: {req.opt_in}")
         event_trace = EventTrace(
             task_id,
@@ -719,7 +735,9 @@ class ScholarQA:
 
         # Generate future ideas section
         try:
-            future_ideas_section = self.generate_future_ideas_section(json_summary, query, event_trace, paper_metadata)
+            future_ideas_section = self.generate_future_ideas_section(
+                json_summary, query, event_trace, paper_metadata, ideation_query, ideation_instructions
+            )
             if future_ideas_section:
                 generated_sections.append(future_ideas_section)
         except Exception as e:
@@ -733,9 +751,19 @@ class ScholarQA:
         return TaskResult(sections=generated_sections, cost=event_trace.total_cost)
 
     def generate_future_ideas_section(
-        self, json_summary: List[Dict], query: str, event_trace, paper_metadata: Dict[str, Any]
+        self,
+        json_summary: List[Dict],
+        query: str,
+        event_trace,
+        paper_metadata: Dict[str, Any],
+        ideation_query: str = None,
+        ideation_instructions: str = None,
     ) -> GeneratedSection:
         """Generate a future ideas section using Semantic Scholar snippet search"""
+
+        # Use ideation_query if provided, otherwise default to original query
+        if ideation_query is None:
+            ideation_query = query
 
         self.update_task_state("Searching for future work snippets", step_estimated_time=10)
 
@@ -762,8 +790,10 @@ class ScholarQA:
         self.update_task_state("Generating concrete future ideas iteratively", step_estimated_time=60)
 
         # Generate future ideas iteratively
-        future_ideas_generator = self._generate_future_ideas_iterative(future_snippets, query, event_trace, num_ideas=6)
-        
+        future_ideas_generator = self._generate_future_ideas_iterative(
+            future_snippets, ideation_query, ideation_instructions, event_trace, num_ideas=6
+        )
+
         all_ideas = []
         current_idea = 1
         try:
@@ -778,10 +808,10 @@ class ScholarQA:
         except StopIteration as e:
             # Generator is exhausted, get the final result
             pass
-        
+
         if not all_ideas:
             return None
-            
+
         future_ideas_text = "\n\n".join(all_ideas)
 
         # Create GeneratedSection object
@@ -796,7 +826,7 @@ class ScholarQA:
         return future_section
 
     def _generate_future_ideas_from_snippets(
-        self, snippets: List[Dict], original_query: str, event_trace
+        self, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace
     ) -> CostAwareLLMResult:
         """Generate concrete future ideas from future work snippets using LLM"""
 
@@ -827,8 +857,15 @@ class ScholarQA:
                 snippets_text += f"   Abstract: {abstract}\n"
             snippets_text += f"   Future Work Snippet: {snippet}\n"
 
+        if ideation_instructions:
+            additional_ideation_instructions = f"""
+            Additional important instructions: {ideation_instructions}\n
+            """
+        else:
+            additional_ideation_instructions = "\n"
+
         # Create prompt for generating future ideas
-        prompt = f"""You are tasked with generating concrete future research directions related to the query: "{original_query}"
+        prompt = f"""You are tasked with generating concrete future research directions related to the query: "{ideation_query}"
 
 The following research papers and their future work snippets are provided as hints and context. Use them as inspiration, but can also leverage your own knowledge to generate innovative and actionable research directions.
 It is encouraged to cite prior work and position your idea against the prior work.
@@ -841,11 +878,11 @@ Based on the above context and your knowledge of the field, generate exactly 5-7
 1. Specific and well-defined (not just vague suggestions)
 2. Technically feasible with current or emerging technology
 3. Innovative and forward-thinking
-4. Directly relevant to the original research question: "{original_query}"
+4. Directly relevant to the ideation research question: "{ideation_query}"
 5. Include specific methodologies, datasets, or approaches in line with the prior work provided above.
 
 You may draw inspiration from the provided future work snippets, but don't necessarily limit yourself to them. 
-
+{additional_ideation_instructions}
 Format your response as follows:
 
 ## Future Research Direction 1: [Descriptive Title]
@@ -885,10 +922,10 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             return None
 
     def _generate_future_ideas_iterative(
-        self, snippets: List[Dict], original_query: str, event_trace, num_ideas: int = 6
+        self, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace, num_ideas: int = 6
     ) -> Generator[str, None, CostAwareLLMResult]:
         """Generate future ideas iteratively, one at a time"""
-        
+
         # Prepare snippets text with paper information
         snippets_text = ""
         for i, snippet_data in enumerate(snippets, 1):
@@ -931,18 +968,18 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             cost_args,
             self.multi_step_pipeline.generate_future_ideas_iterative,
             snippets_text=snippets_text,
-            original_query=original_query,
+            ideation_query=ideation_query,
+            ideation_instructions=ideation_instructions,
             num_ideas=num_ideas,
         )
-        
+
         try:
             while True:
                 response = next(idea_generator)
                 yield response.content
         except StopIteration as e:
             return_val = e.value
-        
-        if return_val:
-            event_trace.add_cost(return_val.tot_cost)
-        
+
+        # Cost is already tracked by call_iter_method
+
         return return_val

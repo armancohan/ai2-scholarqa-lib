@@ -199,7 +199,7 @@ class MultiStepQAPipeline:
             yield response
 
     def generate_future_ideas_iterative(
-        self, snippets_text: str, original_query: str, num_ideas: int = 6
+        self, snippets_text: str, ideation_query: str, ideation_instructions: str, num_ideas: int = 6
     ) -> Generator[CompletionResult, None, None]:
         """Generate future research ideas one at a time"""
         
@@ -209,8 +209,15 @@ class MultiStepQAPipeline:
             # Create prompt for generating one idea
             already_generated = "\n\n".join([f"Idea {j+1}: {idea}" for j, idea in enumerate(existing_ideas)])
             already_generated_text = f"\n\nPreviously generated ideas:\n{already_generated}" if existing_ideas else ""
-            
-            prompt = f"""You are tasked with generating one concrete future research direction related to the query: "{original_query}"
+
+            if ideation_instructions:
+                additional_ideation_instructions = f"""
+                Additional important instructions: {ideation_instructions}\n
+                """
+            else:
+                additional_ideation_instructions = "\n"
+
+            prompt = f"""You are tasked with generating one concrete future research direction related to the query: "{ideation_query}"
 
 The following research papers and their future work snippets are provided as hints and context:{already_generated_text}
 
@@ -222,10 +229,10 @@ Generate exactly ONE new concrete and actionable future research direction. This
 1. Specific and well-defined (not just vague suggestions)
 2. Technically feasible with current or emerging technology
 3. Innovative and forward-thinking
-4. Directly relevant to the original research question: "{original_query}"
+4. Directly relevant to the ideation research question: "{ideation_query}"
 5. Different from any previously generated ideas
 6. Include specific methodologies, datasets, or approaches
-
+{additional_ideation_instructions}
 Format your response as follows:
 
 ## Future Research Direction {i+1}: [Descriptive Title]
@@ -239,5 +246,81 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             response = llm_completion(
                 user_prompt=prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
             )
-            existing_ideas.append(response.content)
-            yield response
+            
+            # Evaluate the generated idea
+            evaluation = self.evaluate_research_idea(response.content, ideation_query, snippets_text)
+            
+            # Combine idea with evaluation
+            idea_with_evaluation = f"{response.content}\n\n### Idea Evaluation\n{evaluation.content}"
+            
+            existing_ideas.append(idea_with_evaluation)
+            
+            # Create a new response object with the combined content
+            combined_response = CompletionResult(
+                content=idea_with_evaluation,
+                model=response.model,
+                cost=response.cost + evaluation.cost,
+                input_tokens=response.input_tokens + evaluation.input_tokens,
+                output_tokens=response.output_tokens + evaluation.output_tokens,
+                total_tokens=response.total_tokens + evaluation.total_tokens
+            )
+            
+            yield combined_response
+
+    def evaluate_research_idea(self, idea_text: str, ideation_query: str, context_snippets: str) -> CompletionResult:
+        """Evaluate the quality and feasibility of a generated research idea"""
+        
+        evaluation_prompt = f"""You are an expert research evaluator tasked with assessing the quality of a proposed research direction. 
+
+Original Research Query: "{ideation_query}"
+
+Research Context (relevant papers and snippets):
+{context_snippets[:1500]}...  
+
+Proposed Research Idea:
+{idea_text}
+
+Please evaluate this research idea across the following dimensions and provide a comprehensive assessment:
+
+## Evaluation Criteria:
+
+1. **Novelty & Innovation** (1-10): How novel and innovative is this idea? Does it introduce new concepts or approaches?
+
+2. **Technical Feasibility** (1-10): How technically feasible is this research with current or near-future technology?
+
+3. **Scientific Rigor** (1-10): How well-grounded is the methodology? Are the proposed approaches scientifically sound?
+
+4. **Impact Potential** (1-10): What is the potential impact of this research on the field?
+
+5. **Relevance to Query** (1-10): How well does this idea address the original research question?
+
+6. **Clarity & Specificity** (1-10): How clear and specific are the proposed methods and expected outcomes?
+
+## Format your evaluation as follows:
+
+**Overall Score: X/60**
+
+**Strengths:**
+- [List 2-3 key strengths]
+
+**Weaknesses:**
+- [List 2-3 key weaknesses or areas for improvement]
+
+**Recommendations:**
+- [Provide 1-2 specific recommendations to improve this research direction]
+
+**Final Assessment:** [1-2 sentences summarizing whether this is a strong research direction and why]
+
+Be critical but constructive in your evaluation. Focus on providing actionable feedback."""
+
+        # Add thinking parameter for Gemini models
+        llm_kwargs = self._add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
+
+        evaluation_response = llm_completion(
+            user_prompt=evaluation_prompt, 
+            model=self.summary_generation_llm, 
+            fallback=self.fallback_llm, 
+            **llm_kwargs
+        )
+        
+        return evaluation_response

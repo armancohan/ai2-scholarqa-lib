@@ -48,6 +48,12 @@ class ToolRequest(BaseModel):
     opt_in: Optional[bool] = Field(default=True, description=(
         "Flag to indicate whether to include the query and response in public release"))
     user_id: Optional[str] = Field(default=None, description="The user id of the user who posed the query")
+    ideation_query: Optional[str] = Field(default=None, description=(
+        "A specific question for generating future research directions (if different from main query). Leave blank to use the main research question."
+    ))
+    ideation_instructions: Optional[str] = Field(default=None, description=(
+        "Instructions for generating future research directions"
+    ))
 
 
 class CitationSrc(BaseModel):

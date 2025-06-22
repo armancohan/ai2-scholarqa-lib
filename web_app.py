@@ -178,6 +178,8 @@ async def process_query(message: dict, client_id: str):
     """Process a scholar query and send progress updates via WebSocket"""
     try:
         query = message["query"]
+        ideation_query = message.get("ideation_query")  # Can be None
+        ideation_instructions = message.get("ideation_instructions")  # Can be None        
         config_name = message.get("config_name", "llm_reranker")
         inline_tags = message.get("inline_tags", False)
 
@@ -262,7 +264,7 @@ async def process_query(message: dict, client_id: str):
         #     )
 
         # Process the query
-        result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
+        result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex", ideation_query=ideation_query, ideation_instructions=ideation_instructions)
 
         await manager.send_message({"type": "status", "step": "formatting", "message": "Formatting results..."}, client_id)
 
