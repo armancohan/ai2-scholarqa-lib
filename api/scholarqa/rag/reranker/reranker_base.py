@@ -3,14 +3,15 @@ import logging
 import math
 import re
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union, Any
+from typing import Any, Dict, List, Optional, Union
+from scholarqa.llms.litellm_helper import add_gemini_thinking_if_needed
 
 import requests
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-try: 
+try:
     from vllm import LLM, SamplingParams
     from vllm.distributed.parallel_state import destroy_model_parallel
     from vllm.inputs.data import TokensPrompt
@@ -211,11 +212,7 @@ class QWENRerankerOpenAI(AbstractReranker):
         self.api_url = api_url
         self.model_name = model_name
         self.instruction = "Given the following query for the scientific literature search, retrieve relevant passages that support the information requested. Assign low ranking the survey papers, they are usually not relevant."
-        self.headers = {
-            "User-Agent": "ScholarQA-Reranker",
-            "Content-Type": "application/json",
-            "accept": "application/json"
-        }
+        self.headers = {"User-Agent": "ScholarQA-Reranker", "Content-Type": "application/json", "accept": "application/json"}
 
     def _prepare_input(self, query: str, documents: List[str]) -> dict:
         input_1 = f"Instruct: {self.instruction}\nQuery: {query}"
@@ -228,11 +225,11 @@ class QWENRerankerOpenAI(AbstractReranker):
 
     def _post_request(self, query: str, documents: List[str]) -> List[float]:
         """Make a POST request to the scoring API with batch inference.
-        
+
         Args:
             query: The query text
             documents: List of documents to score against the query
-            
+
         Returns:
             List of relevance scores for each document
         """
@@ -252,7 +249,9 @@ class QWENRerankerOpenAI(AbstractReranker):
             List of relevance scores for each document
         """
         # Send all documents in a single batch request
-        raise NotImplementedError("QWENRerankerOpenAI is not supported as vLLM serve does not yet support reranking with Qwen3-Reranker. Please use QWENRerankerVLLM instead for direct model inference.")
+        raise NotImplementedError(
+            "QWENRerankerOpenAI is not supported as vLLM serve does not yet support reranking with Qwen3-Reranker. Please use QWENRerankerVLLM instead for direct model inference."
+        )
         scores = self._post_request(query, documents)
         return [float(s) for s in scores]
 
@@ -287,30 +286,30 @@ class QWENRerankerVLLM(AbstractReranker):
         self.model_name = model_name
         self.max_model_len = max_model_len
         self.gpu_memory_utilization = gpu_memory_utilization
-        
+
         # Get number of available GPUs
         number_of_gpu = torch.cuda.device_count()
-        
+
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.tokenizer.padding_side = "left"
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        
+
         # Initialize model with correct parameters
         self.model = LLM(
             model=model_name,
             tensor_parallel_size=number_of_gpu,
             max_model_len=max_model_len,
             enable_prefix_caching=True,
-            gpu_memory_utilization=gpu_memory_utilization
+            gpu_memory_utilization=gpu_memory_utilization,
         )
-        
+
         # Setup suffix and tokens
         self.suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
         self.suffix_tokens = self.tokenizer.encode(self.suffix, add_special_tokens=False)
         self.true_token = self.tokenizer("yes", add_special_tokens=False).input_ids[0]
         self.false_token = self.tokenizer("no", add_special_tokens=False).input_ids[0]
-        
+
         # Setup sampling parameters
         self.sampling_params = SamplingParams(
             temperature=0,
@@ -318,10 +317,10 @@ class QWENRerankerVLLM(AbstractReranker):
             logprobs=20,
             allowed_token_ids=[self.true_token, self.false_token],
         )
-        
+
         # Default instruction
         self.instruction = "Given the following query for the scientific literature search, retrieve relevant passages that support the information requested. Assign low score of relevance to survey papers, they are usually not relevant."
-        
+
         self._initialized = True
 
     def format_instruction(self, query: str, doc: str) -> List[Dict[str, str]]:
@@ -329,12 +328,11 @@ class QWENRerankerVLLM(AbstractReranker):
         return [
             {
                 "role": "system",
-                "content": "Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."
+                "content": (
+                    'Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".'
+                ),
             },
-            {
-                "role": "user",
-                "content": f"<Instruct>: {self.instruction}\n\n<Query>: {query}\n\n<Document>: {doc}"
-            }
+            {"role": "user", "content": f"<Instruct>: {self.instruction}\n\n<Query>: {query}\n\n<Document>: {doc}"},
         ]
 
     def process_inputs(self, pairs: List[tuple]) -> List[Any]:
@@ -343,7 +341,7 @@ class QWENRerankerVLLM(AbstractReranker):
         messages = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=False, enable_thinking=False
         )
-        messages = [ele[:self.max_model_len - len(self.suffix_tokens)] + self.suffix_tokens for ele in messages]
+        messages = [ele[: self.max_model_len - len(self.suffix_tokens)] + self.suffix_tokens for ele in messages]
         return [TokensPrompt(prompt_token_ids=ele) for ele in messages]
 
     def compute_scores(self, outputs) -> List[float]:
@@ -351,7 +349,7 @@ class QWENRerankerVLLM(AbstractReranker):
         scores = []
         for output in outputs:
             final_logits = output.outputs[0].logprobs[-1]
-            
+
             # Get logits for true/false tokens
             token_count = len(output.outputs[0].token_ids)
             if self.true_token not in final_logits:
@@ -362,7 +360,7 @@ class QWENRerankerVLLM(AbstractReranker):
                 false_logit = -10
             else:
                 false_logit = final_logits[self.false_token].logprob
-            
+
             # Compute probability scores
             true_score = math.exp(true_logit)
             false_score = math.exp(false_logit)
@@ -382,19 +380,19 @@ class QWENRerankerVLLM(AbstractReranker):
         """
         # Create query-document pairs
         pairs = [(query, doc) for doc in documents]
-        
+
         # Process inputs
         inputs = self.process_inputs(pairs)
-        
+
         # Generate scores
         outputs = self.model.generate(inputs, self.sampling_params, use_tqdm=False)
         scores = self.compute_scores(outputs)
-        
+
         return [float(s) for s in scores]
 
     def __del__(self):
         """Cleanup when the instance is deleted."""
-        if hasattr(self, 'model'):
+        if hasattr(self, "model"):
             destroy_model_parallel()
 
 
@@ -408,7 +406,7 @@ class LLMReranker(AbstractReranker):
         use_batch: bool = True,
         max_tokens: int = 10,
         temperature: float = 0.0,
-        **llm_kwargs
+        **llm_kwargs,
     ):
         """Initialize the LLM reranker.
 
@@ -425,11 +423,8 @@ class LLMReranker(AbstractReranker):
         self.use_batch = use_batch
         self.max_tokens = max_tokens
         self.temperature = temperature
-        self.llm_kwargs = {
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            **llm_kwargs
-        }
+        self.llm_kwargs = {"max_tokens": max_tokens, "temperature": temperature, **llm_kwargs}
+        self.llm_kwargs = add_gemini_thinking_if_needed(model, self.llm_kwargs)
 
         # System prompt for relevance scoring
         self.system_prompt = """You are an reserach scientist and expert at judging the relevance of scientific papers to research queries. Your task is to evaluate whether a scientific paper (abstract or paper snippets) addresses the given research query and provide a relevance score.
@@ -465,9 +460,9 @@ Relevance Score:"""
         try:
             # Remove any whitespace and try to extract a number
             response = response.strip()
-            
+
             # Look for an integer or decimal number
-            score_match = re.search(r'(\d*\.?\d+)', response)
+            score_match = re.search(r"(\d*\.?\d+)", response)
             if score_match:
                 raw_score = float(score_match.group(1))
                 # Clamp score between 0 and 10
@@ -485,41 +480,45 @@ Relevance Score:"""
     def score_single_document(self, query: str, document: str) -> float:
         """Score a single document against the query."""
         user_prompt = self.format_prompt(query, document)
-        
+
         try:
             result = llm_completion(
                 user_prompt=user_prompt,
                 system_prompt=self.system_prompt,
                 model=self.model,
                 fallback=self.fallback_model,
-                **self.llm_kwargs
+                **self.llm_kwargs,
             )
             score = self.parse_score(result.content)
             # Extract raw score for logging
-            raw_score_match = re.search(r'(\d*\.?\d+)', result.content.strip())
+            raw_score_match = re.search(r"(\d*\.?\d+)", result.content.strip())
             raw_score = float(raw_score_match.group(1)) if raw_score_match else 0
             logger.debug(f"Scored document (raw: {raw_score}/10, normalized: {score:.3f}): {document[:100]}...")
             return score
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(f"Error scoring document: {e}")
             return 0.0
 
     def score_batch_documents(self, query: str, documents: List[str]) -> List[float]:
         """Score multiple documents against the query using batch processing."""
         user_prompts = [self.format_prompt(query, doc) for doc in documents]
-        
+
         try:
             results = batch_llm_completion(
                 messages=user_prompts,
                 system_prompt=self.system_prompt,
                 model=self.model,
                 fallback=self.fallback_model,
-                **self.llm_kwargs
+                **self.llm_kwargs,
             )
             scores = [self.parse_score(result.content) for result in results]
             logger.debug(f"Batch scored {len(documents)} documents")
             return scores
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(f"Error in batch scoring: {e}, falling back to individual scoring")
             # Fallback to individual scoring
             return [self.score_single_document(query, doc) for doc in documents]
@@ -538,7 +537,7 @@ Relevance Score:"""
             return []
 
         logger.info(f"Scoring {len(documents)} documents against query using {self.model}")
-        
+
         if self.use_batch and len(documents) > 1:
             return self.score_batch_documents(query, documents)
         else:
@@ -555,38 +554,32 @@ RERANKER_MAPPING = {
     "llm": LLMReranker,
 }
 
+
 def test_qwen_reranker_openai():
     """Test function to demonstrate QWENRerankerOpenAI usage."""
     # Initialize the reranker
-    reranker = QWENRerankerOpenAI(
-        api_url="http://localhost:8000/rerank",
-        model_name="Qwen/Qwen3-Reranker-4B"
-    )
+    reranker = QWENRerankerOpenAI(api_url="http://localhost:8000/rerank", model_name="Qwen/Qwen3-Reranker-4B")
 
     # Test query and documents
     query = "What are the recent advances in transformer-based language models for scientific text understanding?"
-    
+
     documents = [
         # Relevant document about transformers in scientific text
         "Recent advances in transformer-based models have significantly improved scientific text understanding. Models like SciBERT and BioBERT have shown remarkable performance in biomedical text mining tasks, achieving state-of-the-art results in named entity recognition and relation extraction.",
-        
         # Survey paper (should get lower score due to instruction)
         "This survey paper provides a comprehensive overview of various approaches to scientific text understanding, including traditional machine learning methods, deep learning techniques, and recent transformer-based models. We discuss the evolution of these methods and their applications in different scientific domains.",
-        
         # Relevant document about specific application
         "We present a novel transformer-based architecture specifically designed for scientific literature analysis. Our model achieves 92% accuracy in identifying key findings from research papers and 88% in extracting causal relationships between scientific concepts.",
-        
         # Less relevant document
         "The history of natural language processing dates back to the 1950s, with early systems focusing on rule-based approaches and statistical methods. This paper discusses the evolution of NLP techniques over the decades.",
-        
         # Highly relevant document with specific technical details
-        "Our transformer-based model, SciT5, introduces a new pre-training objective specifically for scientific text. It achieves 95% accuracy in understanding complex scientific relationships and outperforms previous models by 15% in scientific question answering tasks."
+        "Our transformer-based model, SciT5, introduces a new pre-training objective specifically for scientific text. It achieves 95% accuracy in understanding complex scientific relationships and outperforms previous models by 15% in scientific question answering tasks.",
     ]
 
     # Get scores
     try:
         scores = reranker.get_scores(query, documents)
-        
+
         # Print results
         print("\nQuery:", query)
         print("\nResults:")
@@ -595,7 +588,7 @@ def test_qwen_reranker_openai():
             print(f"Score: {score:.4f}")
             print(f"Document: {doc[:150]}...")
             print("-" * 80)
-            
+
     except Exception as e:
         print(f"Error during testing: {str(e)}")
 
@@ -603,36 +596,28 @@ def test_qwen_reranker_openai():
 def test_qwen_reranker_vllm():
     """Test function to demonstrate QWENRerankerVLLM usage."""
     # Initialize the reranker with correct parameters
-    reranker = QWENRerankerVLLM(
-        model_name="Qwen/Qwen3-Reranker-4B",
-        max_model_len=10000,
-        gpu_memory_utilization=0.8
-    )
+    reranker = QWENRerankerVLLM(model_name="Qwen/Qwen3-Reranker-4B", max_model_len=10000, gpu_memory_utilization=0.8)
 
     # Test query and documents
     query = "What are the recent advances in transformer-based language models for scientific text understanding?"
-    
+
     documents = [
         # Relevant document about transformers in scientific text
         "Recent advances in transformer-based models have significantly improved scientific text understanding. Models like SciBERT and BioBERT have shown remarkable performance in biomedical text mining tasks, achieving state-of-the-art results in named entity recognition and relation extraction.",
-        
         # Survey paper (should get lower score due to instruction)
         "This survey paper provides a comprehensive overview of various approaches to scientific text understanding, including traditional machine learning methods, deep learning techniques, and recent transformer-based models. We discuss the evolution of these methods and their applications in different scientific domains.",
-        
         # Relevant document about specific application
         "We present a novel transformer-based architecture specifically designed for scientific literature analysis. Our model achieves 92% accuracy in identifying key findings from research papers and 88% in extracting causal relationships between scientific concepts.",
-        
         # Less relevant document
         "The history of natural language processing dates back to the 1950s, with early systems focusing on rule-based approaches and statistical methods. This paper discusses the evolution of NLP techniques over the decades.",
-        
         # Highly relevant document with specific technical details
-        "Our transformer-based model, SciT5, introduces a new pre-training objective specifically for scientific text. It achieves 95% accuracy in understanding complex scientific relationships and outperforms previous models by 15% in scientific question answering tasks."
+        "Our transformer-based model, SciT5, introduces a new pre-training objective specifically for scientific text. It achieves 95% accuracy in understanding complex scientific relationships and outperforms previous models by 15% in scientific question answering tasks.",
     ]
 
     # Get scores
     try:
         scores = reranker.get_scores(query, documents)
-        
+
         # Print results
         print("\nQuery:", query)
         print("\nResults:")
@@ -641,7 +626,7 @@ def test_qwen_reranker_vllm():
             print(f"Score: {score:.4f}")
             print(f"Document: {doc[:150]}...")
             print("-" * 80)
-            
+
     except Exception as e:
         print(f"Error during testing: {str(e)}")
 
@@ -649,40 +634,30 @@ def test_qwen_reranker_vllm():
 def test_llm_reranker():
     """Test function to demonstrate LLMReranker usage."""
     # Initialize the reranker
-    reranker = LLMReranker(
-        model=GPT_41_MINI,
-        use_batch=True,
-        max_tokens=10,
-        temperature=0.0
-    )
+    reranker = LLMReranker(model=GPT_41_MINI, use_batch=True, max_tokens=10, temperature=0.0)
 
     # Test query and documents
     query = "What are the recent advances in transformer-based language models for scientific text understanding?"
-    
+
     documents = [
         # Highly relevant empirical study (should score 8-9/10 → 0.8-0.9 normalized)
         "We present SciBERT, a pre-trained language representation model for scientific text based on BERT. Our model is trained on a large corpus of scientific publications and achieves state-of-the-art performance on scientific NLP tasks including named entity recognition, relation extraction, and text classification. Experimental results show 15% improvement over BERT-base on biomedical NER and 12% on computer science paper classification.",
-        
         # Survey paper (should score 1-2/10 → 0.1-0.2 normalized)
         "This survey provides a comprehensive overview of transformer-based language models in scientific text processing. We review 150+ papers published between 2018-2023, categorizing approaches into domain adaptation, pre-training strategies, and downstream applications. We identify key trends and future research directions in scientific NLP.",
-        
         # Methodological paper with novel approach (should score 8-9/10 → 0.8-0.9 normalized)
         "We introduce SciT5, a novel transformer architecture specifically designed for scientific text understanding. Our method incorporates domain-specific pre-training objectives including citation prediction and section classification. SciT5 achieves 95% accuracy on scientific relation extraction and outperforms previous models by 18% on scientific question answering benchmarks.",
-        
         # Historical/background paper (should score 2-3/10 → 0.2-0.3 normalized)
         "The evolution of natural language processing in scientific domains traces back to early rule-based systems in the 1970s. This paper provides historical context for current transformer-based approaches, discussing the progression from statistical methods through early neural networks to modern attention mechanisms.",
-        
         # Review paper with some relevance (should score 2-3/10 → 0.2-0.3 normalized)
         "Recent reviews of transformer architectures highlight their success across multiple domains. This review paper examines 200+ transformer variants, analyzing their architectural innovations and performance across tasks. While transformers show promise in scientific text, most work focuses on general domain applications.",
-        
         # Highly relevant case study (should score 7-8/10 → 0.7-0.8 normalized)
-        "We evaluate transformer-based models on PubMed abstract classification, comparing BERT, SciBERT, and domain-specific variants. Our experiments on 100K biomedical abstracts show that scientific domain pre-training improves classification accuracy by 23%. We provide detailed analysis of model performance across different medical specialties."
+        "We evaluate transformer-based models on PubMed abstract classification, comparing BERT, SciBERT, and domain-specific variants. Our experiments on 100K biomedical abstracts show that scientific domain pre-training improves classification accuracy by 23%. We provide detailed analysis of model performance across different medical specialties.",
     ]
 
     # Get scores
     try:
         scores = reranker.get_scores(query, documents)
-        
+
         # Print results
         print("\nLLM Reranker Test Results")
         print("=" * 80)
@@ -694,7 +669,7 @@ def test_llm_reranker():
             print(f"Document {i+1} - Score: {raw_score:.1f}/10 (normalized: {score:.3f})")
             print(f"Content: {doc[:150]}...")
             print("-" * 80)
-            
+
         # Show sorted results
         sorted_results = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
         print("\nRanked Results (by relevance score):")
@@ -704,7 +679,7 @@ def test_llm_reranker():
             print(f"Rank {i+1} - Score: {raw_score:.1f}/10 (normalized: {score:.3f})")
             print(f"Content: {doc[:100]}...")
             print("-" * 40)
-            
+
     except Exception as e:
         print(f"Error during testing: {str(e)}")
 

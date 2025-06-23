@@ -1,15 +1,15 @@
 {
   "default": {
-    "reranker": "Qwen/Qwen3-Reranker-4B",
-    "reranker_type": "qwen_vllm",
-    "model": "openai/gpt-4.1-mini",
-    "decomposer_model": "openai/gpt-4.1-mini",
-    "quote_extraction_model": "anthropic/claude-3-5-sonnet-20241022",
-    "clustering_model": "openai/gpt-4.1",
+    "reranker_type": "llm",
+    "reranker_llm_model": "gemini/gemini-2.5-flash",
+    "model": "gemini/gemini-2.5-flash",
+    "decomposer_model": "gemini/gemini-2.5-flash",
+    "quote_extraction_model": "gemini/gemini-2.5-flash",
+    "clustering_model": "gemini/gemini-2.5-flash",
     "summary_generation_model": "anthropic/claude-sonnet-4-20250514",
     "fallback_model": "openai/gpt-4.1",
-    "table_column_model": "openai/gpt-4.1",
-    "table_value_model": "openai/gpt-4.1"
+    "table_column_model": "gemini/gemini-2.5-flash",
+    "table_value_model": "gemini/gemini-2.5-flash"
   },
   "fast": {
     "reranker": "Qwen/Qwen3-Reranker-0.6B",

@@ -1,4 +1,4 @@
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 from nora_lib.tasks.models import AsyncTaskState as BaseAsyncTaskState
 from pydantic import BaseModel, Field
@@ -9,83 +9,92 @@ class Author(BaseModel):
     authorId: Optional[str] = Field(description="The Semantic Scholar id of the author")
 
 
+class IdeationEvaluationResponse(BaseModel):
+    novelty_and_innovation: int
+    clarity_and_specificity: int
+    technical_feasibility: int
+    overall_score: int
+    weaknesses: str
+    final_assessment: str
+    revised_research_idea_title: str
+    revised_research_idea_detailed_description: str
+
+
 class PaperDetails(BaseModel):
-    corpus_id: int = Field(allow_none=False, description=(
-        "The Semantic Scholar id of the cited paper"))
+    corpus_id: int = Field(allow_none=False, description=("The Semantic Scholar id of the cited paper"))
     title: str = Field(description="Title of the paper")
     year: int = Field(description="Year of publication")
     venue: Optional[str] = Field(description="Venue of publication", default=None)
     authors: List[Author] = Field(description="Authors of the paper", default=None)
-    bibtex: Optional[str] = Field(default=None, description=(
-        "The bibtex of the paper"
-    ))
-    n_influential_citations: Optional[int] = Field(default=0, description=(
-        "The number of influential citations to the paper"
-    ))
-    abstract: Optional[str] = Field(default=None, description=(
-        "The abstract of the paper"
-    ))
-    first_author_affiliation: Optional[str] = Field(default=None, description=(
-        "The affiliation of the first author"
-    ))
-    last_author_affiliation: Optional[str] = Field(default=None, description=(
-        "The affiliation of the last author"
-    ))
-    n_citations: Optional[int] = Field(default=0, description=(
-        "The number of times the source paper has been cited"
-    ))
+    bibtex: Optional[str] = Field(default=None, description=("The bibtex of the paper"))
+    n_influential_citations: Optional[int] = Field(default=0, description=("The number of influential citations to the paper"))
+    abstract: Optional[str] = Field(default=None, description=("The abstract of the paper"))
+    first_author_affiliation: Optional[str] = Field(default=None, description=("The affiliation of the first author"))
+    last_author_affiliation: Optional[str] = Field(default=None, description=("The affiliation of the last author"))
+    n_citations: Optional[int] = Field(default=0, description=("The number of times the source paper has been cited"))
 
 
 # TODO: define your request data
 class ToolRequest(BaseModel):
-    task_id: Optional[str] = Field(default=None, description=(
-        "Reference to a long-running task. Provide this argument to receive an update on its"
-        "status and possibly its result."
-    ))
-    query: str = Field(default=None, description=(
-        "A scientific query posed to scholar qa by a user"
-    ))
-    opt_in: Optional[bool] = Field(default=True, description=(
-        "Flag to indicate whether to include the query and response in public release"))
+    task_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Reference to a long-running task. Provide this argument to receive an update on its"
+            "status and possibly its result."
+        ),
+    )
+    query: str = Field(default=None, description=("A scientific query posed to scholar qa by a user"))
+    opt_in: Optional[bool] = Field(
+        default=True, description=("Flag to indicate whether to include the query and response in public release")
+    )
     user_id: Optional[str] = Field(default=None, description="The user id of the user who posed the query")
+    ideation_query: Optional[str] = Field(
+        default=None,
+        description=(
+            "A specific question for generating future research directions (if different from main query). Leave blank to use the main research question."
+        ),
+    )
+    ideation_instructions: Optional[str] = Field(
+        default=None, description=("Instructions for generating future research directions")
+    )
 
 
 class CitationSrc(BaseModel):
-    id: str = Field(default=None, description=(
-        "The id of the citation which is of the format (index, author_ref_string, year)"
-    ))
+    id: str = Field(
+        default=None, description=("The id of the citation which is of the format (index, author_ref_string, year)")
+    )
     paper: PaperDetails = Field(description="Metadata of the cited paper")
-    snippets: Optional[List[str]] = Field(default=[], description=(
-        "A list of all the relevant snippets from the cited paper"
-    ))
+    snippets: Optional[List[str]] = Field(default=[], description=("A list of all the relevant snippets from the cited paper"))
     score: float = Field(description=("Relevance score of the snippet for the query"))
 
 
 class GeneratedSection(BaseModel):
-    title: str = Field(default=None, description=(
-        "header for the generated section text"
-    ))
-    tldr: str = Field(default=None, description=(
-        "A short summary of the generated section"
-    ))
-    text: str = Field(default=None, description=(
-        "The generated section text"
-    ))
-    citations: List[CitationSrc] = Field(default=None, description=(
-        "The citations used in the generated section"
-    ))
-    bibtex: Optional[str] = Field(default=None, description=(
-        "The bibtex of the citations used in the generated section"
-    ))
+    title: str = Field(default=None, description=("header for the generated section text"))
+    tldr: str = Field(default=None, description=("A short summary of the generated section"))
+    text: str = Field(default=None, description=("The generated section text"))
+    citations: List[CitationSrc] = Field(default=None, description=("The citations used in the generated section"))
+    bibtex: Optional[str] = Field(default=None, description=("The bibtex of the citations used in the generated section"))
     table: Optional[Any] = Field(default=None, description=("Table widget object for sections with list format"))
+
+    def to_string(self, section_number: int = None) -> str:
+        if section_number:
+            section_number_str = f"Section {section_number}: "
+        else:
+            section_number_str = "Section: "
+        return_str = f"""
+{section_number_str}{self.title}\n
+TLDR:{self.tldr}\n
+Text:{self.text}\n
+Bibtex:{self.bibtex}\n
+"""
+        return return_str
 
 
 # TODO: define your result data
 class TaskResult(BaseModel):
     """The outcome of running a Task to completion"""
-    sections: List[GeneratedSection] = Field(
-        description="The generated iterations of the answer"
-    )
+
+    sections: List[GeneratedSection] = Field(description="The generated iterations of the answer")
     cost: float = Field(description="The overall cost of the task", default=0.0)
 
 
@@ -107,8 +116,7 @@ class AsyncTaskState(BaseAsyncTaskState[TaskResult]):
 
 class AsyncToolResponse(BaseModel):
     task_id: str = Field(
-        "Identifies the long-running task so that its status and eventual result"
-        "can be checked in follow-up calls."
+        "Identifies the long-running task so that its status and eventual result" "can be checked in follow-up calls."
     )
     query: str = Field(description="The query that was posed to the tool.")
     estimated_time: str = Field(description="How long we expect this task to take from start to finish")

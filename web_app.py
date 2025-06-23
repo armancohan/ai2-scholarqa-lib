@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 
+import asyncio
 import json
 import logging
 import os
 from datetime import datetime
+from time import time
 from typing import Dict
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from scholarqa.llms.constants import GEMINI_25_FLASH
+from scholarqa.models import AsyncTaskState, TaskStep
+from scholarqa.state_mgmt.local_state_mgr import LocalStateMgrClient
+from scholarqa.utils import format_citation
 
-from query_scholar import load_config, setup_scholar_qa
+from query_scholar import AVAILABLE_MODELS, load_config, setup_scholar_qa
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +52,87 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+class WebSocketStateMgr(LocalStateMgrClient):
+    """Custom state manager that forwards progress updates to WebSocket clients"""
+
+    def __init__(self, client_id: str, connection_manager: ConnectionManager, logs_dir: str = "web_logs"):
+        # Initialize parent with a temporary logs directory
+        super().__init__(logs_dir)
+        self.client_id = client_id
+        self.connection_manager = connection_manager
+        self.initialized_tasks = set()  # Track which tasks we've initialized
+        # Store the current event loop for later use
+        try:
+            self.event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.event_loop = None
+
+    def _ensure_task_initialized(self, task_id: str):
+        """Initialize task state if it doesn't exist"""
+        if task_id not in self.initialized_tasks:
+            try:
+                # Try to read the task state first
+                self.state_mgr.read_state(task_id)
+            except Exception:
+                # Task doesn't exist, create it
+                logger.info(f"Initializing task state for {task_id}")
+                task_state = AsyncTaskState(
+                    task_id=task_id,
+                    estimated_time="~5 minutes",
+                    task_status="Processing",
+                    task_result=None,
+                    extra_state={"steps": [], "start": time()},
+                )
+                self.state_mgr.write_state(task_state)
+            self.initialized_tasks.add(task_id)
+
+    def update_task_state(
+        self,
+        task_id: str,
+        tool_request,
+        status: str,
+        step_estimated_time: int = 0,
+        curr_response=None,
+        task_estimated_time: str = None,
+    ):
+        """Forward progress updates to WebSocket client and call parent"""
+        # Send WebSocket message
+        message = {
+            "type": "progress",
+            "task_id": task_id,
+            "status": status,
+            "step_estimated_time": step_estimated_time,
+            "task_estimated_time": task_estimated_time,
+        }
+
+        # Send the progress update asynchronously
+        logger.info(f"Attempting to send progress update: {status}")
+        if self.event_loop and not self.event_loop.is_closed():
+            try:
+                # Use call_soon_threadsafe to schedule the coroutine from any thread
+                future = asyncio.run_coroutine_threadsafe(
+                    self.connection_manager.send_message(message, self.client_id), self.event_loop
+                )
+                logger.info(f"Progress message scheduled successfully: {status}")
+            except Exception as e:
+                logger.error(f"Error scheduling progress update: {status} - {e}")
+        else:
+            logger.warning(f"No event loop available, cannot send progress: {status}")
+
+        # Ensure task is initialized before calling parent method
+        self._ensure_task_initialized(task_id)
+
+        # Also call parent method to maintain state
+        try:
+            super().update_task_state(task_id, tool_request, status, step_estimated_time, curr_response, task_estimated_time)
+        except Exception as e:
+            # If there's still an error, log it as a warning but don't fail
+            import traceback
+
+            traceback.print_exc()
+            logger.warning(f"Error in parent update_task_state: {e}")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     try:
@@ -61,8 +148,38 @@ async def read_root(request: Request):
                 pass
 
         config_names = list(configs.keys()) if configs else ["default"]
+
+        # Prepare available models for the frontend
+        available_models = []
+        for model in sorted(AVAILABLE_MODELS):
+            # Create display names from the model strings
+            if "gpt-4" in model:
+                display_name = model.replace("openai/", "").replace("-", " ").title()
+                if "4.1" in model:
+                    display_name = display_name.replace("4.1", "4.1")
+                elif "4o" in model:
+                    display_name = display_name.replace("4O", "4o")
+            elif "claude" in model:
+                display_name = model.replace("anthropic/", "").replace("-", " ").title()
+                if "3 5" in display_name:
+                    display_name = display_name.replace("3 5", "3.5")
+            elif "llama" in model:
+                display_name = "Llama 3.1 405B (Together AI)"
+            else:
+                display_name = model
+
+            available_models.append({"value": model, "display_name": display_name})
+
         logger.info(f"Serving index.html with configs: {config_names}")
-        return templates.TemplateResponse("index.html", {"request": request, "config_names": config_names})
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "config_names": config_names,
+                "available_models": available_models,
+                "default_model": GEMINI_25_FLASH,
+            },
+        )
     except Exception as e:
         logger.error(f"Error in read_root: {e}")
         return HTMLResponse(f"<html><body><h1>Error</h1><p>{str(e)}</p></body></html>", status_code=500)
@@ -90,8 +207,18 @@ async def process_query(message: dict, client_id: str):
     """Process a scholar query and send progress updates via WebSocket"""
     try:
         query = message["query"]
+        ideation_query = message.get("ideation_query")  # Can be None
+        ideation_instructions = message.get("ideation_instructions")  # Can be None
         config_name = message.get("config_name", "llm_reranker")
         inline_tags = message.get("inline_tags", False)
+
+        # Extract model selections from the frontend
+        main_model = message.get("main_model", "")
+        decomposer_model = message.get("decomposer_model", "")
+        quote_extraction_model = message.get("quote_extraction_model", "")
+        clustering_model = message.get("clustering_model", "")
+        summary_generation_model = message.get("summary_generation_model", "")
+        reranker_llm_model = message.get("reranker_llm_model", "")
 
         # Send initial status
         await manager.send_message({"type": "status", "step": "initializing", "message": "Loading configuration..."}, client_id)
@@ -119,19 +246,40 @@ async def process_query(message: dict, client_id: str):
             {"type": "status", "step": "setup_models", "message": "Setting up ScholarQA models..."}, client_id
         )
 
-        # Initialize ScholarQA
+        # Initialize ScholarQA with custom state manager for progress tracking
+        custom_state_mgr = WebSocketStateMgr(client_id, manager)
+
+        # Use user-selected models or fall back to config defaults
+        final_main_model = main_model or config.get("model")
+        final_decomposer_model = decomposer_model or config.get("decomposer_model")
+        final_quote_extraction_model = quote_extraction_model or config.get("quote_extraction_model")
+        final_clustering_model = clustering_model or config.get("clustering_model")
+        final_summary_generation_model = summary_generation_model or config.get("summary_generation_model")
+        final_reranker_llm_model = reranker_llm_model or config.get("reranker_llm_model")
+
+        # Log the models being used
+        logger.info(
+            f"Using models - Main: {final_main_model}, "
+            f"Decomposer: {final_decomposer_model}, "
+            f"Quote Extraction: {final_quote_extraction_model}, "
+            f"Clustering: {final_clustering_model}, "
+            f"Summary Generation: {final_summary_generation_model}, "
+            f"Reranker LLM: {final_reranker_llm_model}"
+        )
+
         scholar_qa = setup_scholar_qa(
             reranker_model=reranker,
             reranker_type=reranker_type,
-            reranker_llm_model=config.get("reranker_llm_model"),
-            llm_model=config.get("model"),
-            decomposer_model=config.get("decomposer_model"),
-            quote_extraction_model=config.get("quote_extraction_model"),
-            clustering_model=config.get("clustering_model"),
-            summary_generation_model=config.get("summary_generation_model"),
+            reranker_llm_model=final_reranker_llm_model,
+            llm_model=final_main_model,
+            decomposer_model=final_decomposer_model,
+            quote_extraction_model=final_quote_extraction_model,
+            clustering_model=final_clustering_model,
+            summary_generation_model=final_summary_generation_model,
             fallback_model=config.get("fallback_model"),
             table_column_model=config.get("table_column_model"),
             table_value_model=config.get("table_value_model"),
+            state_mgr=custom_state_mgr,
         )
 
         await manager.send_message(
@@ -139,12 +287,29 @@ async def process_query(message: dict, client_id: str):
             client_id,
         )
 
-        # Process the query
-        result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
+        # Run in executor to avoid blocking the event loop while allowing progress updates
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            result = await asyncio.get_event_loop().run_in_executor(
+                executor,
+                lambda: scholar_qa.answer_query(
+                    query,
+                    inline_tags=inline_tags,
+                    output_format="latex",
+                    ideation_query=ideation_query,
+                    ideation_instructions=ideation_instructions,
+                ),
+            )
+
+        # # Process the query
+        # result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex", ideation_query=ideation_query, ideation_instructions=ideation_instructions)
 
         await manager.send_message({"type": "status", "step": "formatting", "message": "Formatting results..."}, client_id)
 
         # Format the result
+        all_citations = set()
+        all_citations_plain_text = set()
         formatted_result = ""
         for section in result["sections"]:
             formatted_result += f"\n{section['title']}\n"
@@ -153,13 +318,20 @@ async def process_query(message: dict, client_id: str):
                 formatted_result += f"\nTLDR: {section['tldr']}\n\n"
             formatted_result += section["text"] + "\n"
             if section.get("citations"):
-                formatted_result += "\nCitations:\n"
-                formatted_result += "```\n"
                 for citation in section["citations"]:
                     paper = citation["paper"]
-                    formatted_result += paper["bibtex"] + "\n"
-                formatted_result += "```\n"
+                    all_citations.add(paper["bibtex"])
+                    all_citations_plain_text.add(format_citation(paper))
             formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "CITATIONS" + "\n\n"
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n\n".join(list(all_citations_plain_text))
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n" + "BIBTEX CITATIONS" + "\n\n"
+        formatted_result += "\n" + "=" * 80 + "\n\n"
+        formatted_result += "\n".join(list(all_citations))
+        formatted_result += "\n" + "=" * 80 + "\n\n"
 
         # Add cost information
         if "cost" in result:
@@ -181,6 +353,9 @@ async def process_query(message: dict, client_id: str):
 
     except Exception as e:
         logger.error(f"Error processing query for {client_id}: {e}")
+        import traceback
+
+        traceback.print_exc()
         await manager.send_message({"type": "error", "message": f"Error processing query: {str(e)}"}, client_id)
 
 

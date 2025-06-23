@@ -3,18 +3,16 @@ import logging
 import re
 from collections import namedtuple
 from multiprocessing import Queue
-from typing import Tuple, List
+from typing import List, Tuple
 
 from litellm import moderation
 from pydantic import BaseModel, Field
-
-from scholarqa.llms.litellm_helper import llm_completion, CompletionResult
+from scholarqa.llms.litellm_helper import CompletionResult, llm_completion
 from scholarqa.llms.prompts import QUERY_DECOMPOSER_PROMPT
 
 logger = logging.getLogger(__name__)
 
-LLMProcessedQuery = namedtuple("LLMProcessedQuery",
-                               ["rewritten_query", "keyword_query", "search_filters"])
+LLMProcessedQuery = namedtuple("LLMProcessedQuery", ["rewritten_query", "keyword_query", "search_filters"])
 
 
 class DecomposedQuery(BaseModel):
@@ -34,14 +32,10 @@ def moderation_api(text: str) -> bool:
 
 def validate(query: str) -> None:
     # self.update_task_state(task_id, "Validating the query")
-    logger.info(
-        "Checking query for malicious content with moderation api..."
-    )
+    logger.info("Checking query for malicious content with moderation api...")
     try:
         if moderation_api(query):
-            raise Exception(
-                "The input query contains harmful content."
-            )
+            raise Exception("The input query contains harmful content.")
     except Exception as e:
         logger.error(f"Query validation failed, {e}")
         raise e
@@ -52,9 +46,19 @@ def decompose_query(query: str, decomposer_llm_model: str, **llm_kwargs) -> Tupl
     search_filters = dict()
     decomp_query_res = None
     try:
+        # Add thinking parameter for Gemini models
+        if decomposer_llm_model and "gemini" in decomposer_llm_model.lower():
+            llm_kwargs = llm_kwargs.copy()
+            llm_kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+
         # decompose query to get llm re-written and keyword query with filters
-        decomp_query_res = llm_completion(user_prompt=query, system_prompt=QUERY_DECOMPOSER_PROMPT,
-                                          model=decomposer_llm_model, response_format=DecomposedQuery, **llm_kwargs)
+        decomp_query_res = llm_completion(
+            user_prompt=query,
+            system_prompt=QUERY_DECOMPOSER_PROMPT,
+            model=decomposer_llm_model,
+            response_format=DecomposedQuery,
+            **llm_kwargs,
+        )
         decomposed_query = json.loads(decomp_query_res.content)
         decomposed_query = {k: str(v) if type(v) == int else v for k, v in decomposed_query.items()}
         decomposed_query = DecomposedQuery(**decomposed_query)
@@ -68,9 +72,14 @@ def decompose_query(query: str, decomposer_llm_model: str, **llm_kwargs) -> Tupl
             search_filters["fieldsOfStudy"] = decomposed_query.field_of_study
     except Exception as e:
         logger.error(f"Error while decomposing query: {e}")
+        import traceback
+
+        traceback.print_exc()
         rewritten_query = query
         keyword_query = ""
         decomp_query_res = decomp_query_res._replace(model=f"error-{decomp_query_res.model}")
 
-    return LLMProcessedQuery(rewritten_query=rewritten_query, keyword_query=keyword_query,
-                             search_filters=search_filters), decomp_query_res
+    return (
+        LLMProcessedQuery(rewritten_query=rewritten_query, keyword_query=keyword_query, search_filters=search_filters),
+        decomp_query_res,
+    )

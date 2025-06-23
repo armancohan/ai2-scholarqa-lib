@@ -148,7 +148,6 @@ def get_json_summary(llm_model: str, summary_sections: List[str], summary_quotes
                             fixed_quote = fixed_quote[:-3]
                         # dict to save reference strings as there is a possibility of having multiple papers in the same year from the same author
                         refs_done.add(ref_corpus_id)
-                        
                         if output_format == 'latex':
                             curr_paper_meta = paper_metadata.get(ref_corpus_id)
                             bibtex_str = curr_paper_meta.get('citationStyles', {}).get('bibtex') if curr_paper_meta else None

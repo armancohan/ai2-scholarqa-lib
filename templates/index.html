@@ -260,6 +260,31 @@
             font-weight: 500;
         }
 
+        .save-btn {
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .save-btn:hover {
+            background: var(--accent-secondary);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px var(--shadow-color);
+        }
+
+        .save-btn:active {
+            transform: translateY(0);
+        }
+
         .results-content {
             background: var(--bg-base);
             border: 1px solid var(--border-color);
@@ -359,12 +384,103 @@
             </div>
 
             <div class="form-group">
+                <label for="ideationQuery">Future Ideas Query (optional):</label>
+                <textarea 
+                    id="ideationQuery" 
+                    name="ideationQuery" 
+                    placeholder="Enter a specific question for generating future research directions (if different from main query). Leave blank to use the main research question."
+                    style="min-height: 80px;"></textarea>
+            </div>
+
+
+            <div class="form-group">
+                <label for="ideationInstructions">LLM instructions for future ideas (Optional)</label>
+                <textarea 
+                    id="ideationInstructions" 
+                    name="ideationInstructions" 
+                    placeholder="Enter a specific instructions for generating future research directions."
+                    style="min-height: 80px;"></textarea>
+            </div>
+
+            <div class="form-group">
                 <label for="config">Configuration:</label>
                 <select id="config" name="config">
                     {% for config_name in config_names %}
-                    <option value="{{ config_name }}">{{ config_name }}</option>
+                    <option value="{{ config_name }}" {% if config_name == "llm_reranker" %}selected{% endif %}>{{ config_name }}</option>
                     {% endfor %}
                 </select>
+            </div>
+
+            <div class="form-group">
+                <label for="mainModel">Main LLM Model:</label>
+                <select id="mainModel" name="mainModel">
+                    <option value="">Use config default</option>
+                    {% for model in available_models %}
+                    <option value="{{ model.value }}" {% if model.value == default_model %}selected{% endif %}>{{ model.display_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="advancedModels" style="margin-right: 8px;" checked>
+                    Advanced Model Configuration
+                </label>
+            </div>
+
+            <div id="advancedModelSection" style="display: block; background: var(--bg-highlight); padding: 20px; border-radius: 4px; border-left: 3px solid var(--accent-primary); margin-top: 10px;">
+                <p style="margin-bottom: 15px; color: var(--content-secondary); font-size: 14px;">
+                    Configure specialized models for different processing stages. Leave blank to use the main model.
+                </p>
+                <div class="form-group">
+                    <label for="decomposerModel">Query Decomposer Model:</label>
+                    <select id="decomposerModel" name="decomposerModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="quoteExtractionModel">Quote Extraction Model:</label>
+                    <select id="quoteExtractionModel" name="quoteExtractionModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="clusteringModel">Clustering Model:</label>
+                    <select id="clusteringModel" name="clusteringModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="summaryGenerationModel">Summary Generation Model:</label>
+                    <select id="summaryGenerationModel" name="summaryGenerationModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}" {% if model.value == "anthropic/claude-sonnet-4-20250514" %}selected{% endif %}>{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="rerankerLlmModel">Reranker LLM Model:</label>
+                    <select id="rerankerLlmModel" name="rerankerLlmModel">
+                        <option value="">Use main model</option>
+                        {% for model in available_models %}
+                        <option value="{{ model.value }}" {% if model.value == "gemini/gemini-2.5-flash" %}selected{% endif %}>{{ model.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
 
             <div class="form-group">
@@ -395,7 +511,12 @@
         <div id="resultsSection" class="results-section">
             <div class="results-header">
                 <div class="results-title">Results</div>
-                <div class="cost-info" id="costInfo"></div>
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <div class="cost-info" id="costInfo"></div>
+                    <button id="saveBtn" class="save-btn" title="Save results to file">
+                        💾 Save Results
+                    </button>
+                </div>
             </div>
             <div class="results-content" id="resultsContent"></div>
         </div>
@@ -416,6 +537,7 @@
         const resultsContent = document.getElementById('resultsContent');
         const costInfo = document.getElementById('costInfo');
         const errorMessage = document.getElementById('errorMessage');
+        const saveBtn = document.getElementById('saveBtn');
 
         const steps = {
             'initializing': { text: 'Initializing system...', progress: 20, step: '1 of 5' },
@@ -460,9 +582,14 @@
         }
 
         function handleWebSocketMessage(message) {
+            console.log('Received WebSocket message:', message);
             switch (message.type) {
                 case 'status':
                     updateProgress(message.step, message.message);
+                    break;
+                case 'progress':
+                    console.log('Handling progress message:', message.status);
+                    updateProgressFromScholarQA(message.status, message.step_estimated_time, message.task_estimated_time);
                     break;
                 case 'complete':
                     showResults(message.result, message.cost, message.output_file);
@@ -470,6 +597,8 @@
                 case 'error':
                     showError(message.message);
                     break;
+                default:
+                    console.log('Unknown message type:', message.type);
             }
         }
 
@@ -485,6 +614,52 @@
                 statusText.textContent = message || step;
                 console.log(`Custom progress update: ${message || step}`);
             }
+        }
+
+        function updateProgressFromScholarQA(status, stepEstimatedTime, taskEstimatedTime) {
+            console.log(`updateProgressFromScholarQA called with: status="${status}", stepTime=${stepEstimatedTime}, taskTime=${taskEstimatedTime}`);
+            // Update status text with the detailed progress from ScholarQA
+            statusText.textContent = status;
+            
+            // Update step indicator with timing information if available
+            let stepText = '';
+            if (taskEstimatedTime) {
+                stepText = `Estimated time: ${taskEstimatedTime}`;
+            } else if (stepEstimatedTime && stepEstimatedTime > 0) {
+                stepText = `Est. ${stepEstimatedTime}s for this step`;
+            }
+            
+            if (stepText) {
+                stepIndicator.textContent = stepText;
+            }
+            
+            // Smooth progress bar animation based on the stage of processing
+            let progressPercentage = 80; // Default to processing stage
+            if (status.includes('Processing user query')) {
+                progressPercentage = 10;
+            } else if (status.includes('Retrieving relevant passages')) {
+                progressPercentage = 20;
+            } else if (status.includes('Retrieved') && status.includes('passages')) {
+                progressPercentage = 30;
+            } else if (status.includes('re-rank')) {
+                progressPercentage = 40;
+            } else if (status.includes('Found') && status.includes('papers')) {
+                progressPercentage = 50;
+            } else if (status.includes('Extracting salient')) {
+                progressPercentage = 60;
+            } else if (status.includes('Synthesizing an answer outline')) {
+                progressPercentage = 70;
+            } else if (status.includes('Start generating each section')) {
+                progressPercentage = 80;
+            } else if (status.includes('Iteratively generating section')) {
+                progressPercentage = 85;
+            } else if (status.includes('Generating comparison tables')) {
+                progressPercentage = 95;
+            }
+            
+            progressFill.style.width = progressPercentage + '%';
+            
+            console.log(`ScholarQA progress: ${status} (${progressPercentage}%)`);
         }
 
         function showResults(result, cost, outputFile) {
@@ -547,14 +722,53 @@
             stepIndicator.textContent = 'Step 1 of 5';
 
             // Send query
+            const ideationQueryValue = document.getElementById('ideationQuery').value.trim();
+            const ideationInstructionsValue = document.getElementById('ideationInstructions').value.trim();
             const message = {
                 type: 'query',
                 query: query,
+                ideation_query: ideationQueryValue || null,
+                ideation_instructions: ideationInstructionsValue || null,
                 config_name: document.getElementById('config').value,
-                inline_tags: document.getElementById('inlineTags').checked
+                inline_tags: document.getElementById('inlineTags').checked,
+                main_model: document.getElementById('mainModel').value,
+                decomposer_model: document.getElementById('decomposerModel').value,
+                quote_extraction_model: document.getElementById('quoteExtractionModel').value,
+                clustering_model: document.getElementById('clusteringModel').value,
+                summary_generation_model: document.getElementById('summaryGenerationModel').value,
+                reranker_llm_model: document.getElementById('rerankerLlmModel').value
             };
 
             socket.send(JSON.stringify(message));
+        });
+
+        // Save button functionality
+        saveBtn.addEventListener('click', function() {
+            const content = resultsContent.textContent;
+            if (!content) {
+                alert('No results to save!');
+                return;
+            }
+
+            // Create a timestamp for the filename
+            const now = new Date();
+            const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const filename = `scholarqa-results-${timestamp}.txt`;
+
+            // Create a blob with the content
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+
+            // Create a temporary link and trigger download
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+
+            // Clean up
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
         });
 
         // Initialize WebSocket connection when page loads
@@ -600,6 +814,18 @@
             // Theme toggle functionality
             const themeToggle = document.getElementById('themeToggle');
             themeToggle.addEventListener('click', toggleTheme);
+            
+            // Advanced models toggle functionality
+            const advancedModelsCheckbox = document.getElementById('advancedModels');
+            const advancedModelSection = document.getElementById('advancedModelSection');
+            
+            advancedModelsCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    advancedModelSection.style.display = 'block';
+                } else {
+                    advancedModelSection.style.display = 'none';
+                }
+            });
             
             // Add loading class when processing
             const submitBtn = document.getElementById('submitBtn');
