@@ -28,6 +28,7 @@ from scholarqa.trace.event_traces import EventTrace
 from scholarqa.utils import (
     CATEGORICAL_META_FIELDS,
     NUMERIC_META_FIELDS,
+    extract_json_from_response,
     get_paper_metadata,
     get_ref_author_str,
     make_int,
@@ -506,12 +507,13 @@ class ScholarQA:
     def get_gen_sections_from_json(section: Dict[str, Any]) -> GeneratedSection:
         try:
             citations = [CitationSrc(**citation) for citation in section["citations"]]
+            bibtex_section = '\n'.join([citation.paper.bibtex for citation in citations])
             generated_section = GeneratedSection(
                 title=section["title"],
                 tldr=section["tldr"],
                 text=section["text"],
                 citations=citations,
-                bibtex=section.get("bibtex") or section.get("citationStyles", {}).get("bibtex"),
+                bibtex=bibtex_section,
             )
             return generated_section
         except Exception as e:
@@ -755,7 +757,6 @@ class ScholarQA:
         event_trace.persist_trace(self.logs_config)
         return TaskResult(sections=generated_sections, cost=event_trace.total_cost)
 
-
     def generate_future_ideas_section(
         self,
         generated_sections: List[GeneratedSection],
@@ -798,11 +799,7 @@ class ScholarQA:
         if future_snippets and len(future_snippets) > 5:
             logger.info(f"Ranking {len(future_snippets)} future work snippets")
             future_snippets = rank_future_snippets_with_llm(
-                future_snippets, 
-                ideation_query, 
-                self.reranker_llm, 
-                self.fallback_llm,
-                self.update_task_state
+                future_snippets, ideation_query, self.reranker_llm, self.fallback_llm, self.update_task_state
             )
 
         if not future_snippets:
@@ -847,9 +844,14 @@ class ScholarQA:
 
         return future_section
 
-
     def _generate_future_ideas_iterative(
-        self, sections_str: str, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace, num_ideas: int = 6
+        self,
+        sections_str: str,
+        snippets: List[Dict],
+        ideation_query: str,
+        ideation_instructions: str,
+        event_trace,
+        num_ideas: int = 6,
     ) -> Generator[str, None, CostAwareLLMResult]:
         """Generate future ideas iteratively, one at a time"""
 
@@ -878,7 +880,11 @@ class ScholarQA:
             if paper.get("abstract"):
                 # TODO: hardcode for now
                 MAX_ABSTRACT_LENGTH = 2400
-                abstract = paper["abstract"][:MAX_ABSTRACT_LENGTH] + "..." if len(paper["abstract"]) > MAX_ABSTRACT_LENGTH else paper["abstract"]
+                abstract = (
+                    paper["abstract"][:MAX_ABSTRACT_LENGTH] + "..."
+                    if len(paper["abstract"]) > MAX_ABSTRACT_LENGTH
+                    else paper["abstract"]
+                )
                 snippets_text += f"   Abstract: {abstract}\n"
             snippets_text += f"   Future Work Snippet(s): {snippet}\n"
 

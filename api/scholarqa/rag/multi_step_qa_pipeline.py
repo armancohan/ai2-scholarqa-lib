@@ -15,7 +15,7 @@ from scholarqa.llms.prompts import (
     USER_PROMPT_QUOTE_LIST_FORMAT,
 )
 from scholarqa.models import IdeationEvaluationResponse
-from scholarqa.utils import CompletionResult
+from scholarqa.utils import CompletionResult, extract_json_from_response
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +266,7 @@ class MultiStepQAPipeline:
                 additional_ideation_instructions = "\n"
 
             prompt = f"""You are tasked with generating one concrete future research direction related to the query:
-            "{ideation_query}"
+"{ideation_query}"
 
 Plan:
 First, I will provide you with some previously generated ideas. You should not generate ideas that are similar to the previously generated ideas.
@@ -292,7 +292,7 @@ Generate exactly ONE new concrete and actionable future research direction. This
 1. Specific and well-defined (not just vague suggestions)
 2. Technically feasible with reasonable budget and resources. For example: we don't want large pretraining experiments, or large data annotations.
 3. Innovative and forward-thinking. Ideally something that is less obvious and more interesting. You can take inspiration from the context provided and the Future Work snippets in the contex.
-4. Relevant to the ideation research question: "{ideation_query}"
+4. Relevant to the ideation instructions: "{ideation_query}"
 5. Different from any previously generated ideas
 6. Include specific methodologies, approaches
 7. Include specific datasets, evaluation metrics, and expected outcomes using the context provided. Look for appropriate datasets and evaluation methods.
@@ -300,7 +300,7 @@ Generate exactly ONE new concrete and actionable future research direction. This
 Format your response as follows:
 
 ## Future Research Direction {i+1}: [Descriptive Title]
-[At least 2 paragraphs of detailed description including specific methodology, expected outcomes, and technical approach. Reference relevant papers when appropriate.]
+[At least 3 paragraphs of detailed description in LaTeX format, including specific methodology, expected outcomes, and technical approach backed by appropriate citations.]
 
 Focus on being specific about methodologies, datasets, evaluation metrics, and expected outcomes rather than providing general suggestions."""
 
@@ -418,10 +418,9 @@ Provide your final revised research idea in the following json format:
             **llm_kwargs,
         )
 
-        json_response = evaluation_response.content
+        json_response = extract_json_from_response(evaluation_response.content)
 
         # Format the JSON response as markdown
-        import ipdb; ipdb.set_trace()
         if json_response and isinstance(json_response, dict):
             converted_json_to_markdown = f"""**Evaluation Results:**
 

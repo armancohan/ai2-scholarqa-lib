@@ -121,13 +121,14 @@ class WebSocketStateMgr(LocalStateMgrClient):
 
         # Ensure task is initialized before calling parent method
         self._ensure_task_initialized(task_id)
-        
+
         # Also call parent method to maintain state
         try:
             super().update_task_state(task_id, tool_request, status, step_estimated_time, curr_response, task_estimated_time)
         except Exception as e:
             # If there's still an error, log it as a warning but don't fail
             import traceback
+
             traceback.print_exc()
             logger.warning(f"Error in parent update_task_state: {e}")
 
@@ -207,7 +208,7 @@ async def process_query(message: dict, client_id: str):
     try:
         query = message["query"]
         ideation_query = message.get("ideation_query")  # Can be None
-        ideation_instructions = message.get("ideation_instructions")  # Can be None        
+        ideation_instructions = message.get("ideation_instructions")  # Can be None
         config_name = message.get("config_name", "llm_reranker")
         inline_tags = message.get("inline_tags", False)
 
@@ -286,16 +287,23 @@ async def process_query(message: dict, client_id: str):
             client_id,
         )
 
-        # # Run in executor to avoid blocking the event loop while allowing progress updates
-        # import concurrent.futures
+        # Run in executor to avoid blocking the event loop while allowing progress updates
+        import concurrent.futures
 
-        # with concurrent.futures.ThreadPoolExecutor() as executor:
-        #     result = await asyncio.get_event_loop().run_in_executor(
-        #         executor, lambda: scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex")
-        #     )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            result = await asyncio.get_event_loop().run_in_executor(
+                executor,
+                lambda: scholar_qa.answer_query(
+                    query,
+                    inline_tags=inline_tags,
+                    output_format="latex",
+                    ideation_query=ideation_query,
+                    ideation_instructions=ideation_instructions,
+                ),
+            )
 
-        # Process the query
-        result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex", ideation_query=ideation_query, ideation_instructions=ideation_instructions)
+        # # Process the query
+        # result = scholar_qa.answer_query(query, inline_tags=inline_tags, output_format="latex", ideation_query=ideation_query, ideation_instructions=ideation_instructions)
 
         await manager.send_message({"type": "status", "step": "formatting", "message": "Formatting results..."}, client_id)
 

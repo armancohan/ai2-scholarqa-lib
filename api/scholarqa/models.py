@@ -82,11 +82,11 @@ class GeneratedSection(BaseModel):
         else:
             section_number_str = "Section: "
         return_str = f"""
-        {section_number_str}{self.title}\n
-        TLDR:{self.tldr}\n
-        Text:{self.text}\n
-        Bibtex:{self.bibtex}\n
-        """
+{section_number_str}{self.title}\n
+TLDR:{self.tldr}\n
+Text:{self.text}\n
+Bibtex:{self.bibtex}\n
+"""
         return return_str
 
 

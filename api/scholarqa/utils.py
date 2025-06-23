@@ -329,75 +329,74 @@ def rank_future_snippets_with_llm(
     if not papers_with_snippets:
         return papers_with_snippets
 
-    # Create papers list with concatenated snippets
-    papers_for_ranking = []
-    for paper_data in papers_with_snippets:
-        # Concatenate all snippets from this paper with "..." separator
-        concatenated_snippets = "...".join(snippet["snippet"] for snippet in paper_data["unique_snippets"])
-
-        paper_for_ranking = {
-            "concatenated_snippets": concatenated_snippets,
-            "paper": paper_data["origin_paper"],
-            "original_snippets": paper_data["unique_snippets"],
-        }
-        papers_for_ranking.append(paper_for_ranking)
+    # Create individual snippets for ranking with paper context
+    individual_snippets = []
+    for paper_idx, paper_data in enumerate(papers_with_snippets):
+        for snippet_idx, snippet in enumerate(paper_data["unique_snippets"]):
+            individual_snippet = {
+                "snippet_text": snippet["snippet"],
+                "search_term": snippet["search_term"],
+                "paper_index": paper_idx,
+                "snippet_index": snippet_idx,
+                "paper": paper_data["origin_paper"],
+                "global_snippet_id": len(individual_snippets) + 1,
+            }
+            individual_snippets.append(individual_snippet)
 
     if update_task_state_callback:
         update_task_state_callback(
-            "Ranking future work papers for quality and relevance",
-            step_estimated_time=len(papers_for_ranking) // 4,
+            "Ranking individual future work snippets for quality and relevance",
+            step_estimated_time=len(individual_snippets) // 8,
         )
 
-    batch_size = 10
-    all_rankings = []
+    batch_size = 15
+    all_snippet_rankings = []
 
-    # Process papers in batches
-    for batch_start in range(0, len(papers_for_ranking), batch_size):
-        batch_end = min(batch_start + batch_size, len(papers_for_ranking))
-        batch_papers = papers_for_ranking[batch_start:batch_end]
+    # Process individual snippets in batches
+    for batch_start in range(0, len(individual_snippets), batch_size):
+        batch_end = min(batch_start + batch_size, len(individual_snippets))
+        batch_snippets = individual_snippets[batch_start:batch_end]
 
         # Create prompt for this batch
-        papers_text = ""
-        for i, paper_data in enumerate(batch_papers):
-            local_idx = batch_start + i + 1  # Global index across all papers
-            concatenated_txt = paper_data["concatenated_snippets"].replace("\n", " ")
-            papers_text += (
-                f"Paper Index: [{local_idx}]\n"
-                f"Paper title: {paper_data['paper']['title']}\n"
-                f"Year: ({paper_data['paper']['year']})\n"
-                f"Citations: {paper_data['paper']['citationCount']}\n"
-                f"Future Work Snippets: {concatenated_txt}\n\n---\n\n"
+        snippets_text = ""
+        for snippet_data in batch_snippets:
+            snippet_txt = snippet_data["snippet_text"].replace("\n", " ")
+            snippets_text += (
+                f"Snippet ID: [{snippet_data['global_snippet_id']}]\n"
+                f"Paper: {snippet_data['paper']['title']} ({snippet_data['paper']['year']})\n"
+                f"Citations: {snippet_data['paper']['citationCount']}\n"
+                f"Future Work Snippet: {snippet_txt}\n\n---\n\n"
             )
 
-        ranking_prompt = f"""You are tasked with ranking papers based on their future work suggestions' relevance to the research query and quality as actionable future research directions.
+        ranking_prompt = f"""You are tasked with ranking individual future work snippets based on their relevance to the research query and quality as actionable future research directions.
 
 Research Query: 
 "{ideation_query}"
 
-Below are {len(batch_papers)} papers with their future work snippets (batch {batch_start//batch_size + 1}):
+Below are {len(batch_snippets)} individual future work snippets (batch {batch_start//batch_size + 1}):
 
-{papers_text}
+{snippets_text}
 
-Please evaluate each paper's future work suggestions and provide scores. Focus on the future work snippets and not the paper's abstract or metadata. Consider:
+Please evaluate each snippet individually and provide scores. Consider:
 
-1. **Relevance**: Are these snippets actually future work suggestions? How closely related are they to the research query?
-2. **Specificity**: Do they suggest concrete, actionable research directions (not vague "more research needed")?
-3. **Innovation Potential**: Do they identify gaps/limitations that could lead to novel research?
-4. **Technical Depth**: Do they provide enough technical detail to inspire concrete research ideas or are they vague?
+1. **Relevance**: Is this snippet actually a future work suggestion? How closely related is it to the research query?
+2. **Specificity**: Does it suggest concrete, actionable research directions (not vague "more research needed")?
+3. **Innovation Potential**: Does it identify gaps/limitations that could lead to novel research?
+4. **Technical Depth**: Does it provide enough technical detail to inspire concrete research ideas or is it vague?
 
-Return ONLY a JSON array with evaluations for ALL papers in this batch.
+Return ONLY a JSON array with evaluations for ALL snippets in this batch.
 Do not be too much biased by the number of citations.
 Do not include any explanatory text before or after the JSON.
 
-Required format for each paper:
-- "paper_index": the index from the list above
+Required format for each snippet:
+- "snippet_id": the ID from the list above
 - "score": score from 0-10 for overall quality and relevance
 - "reason": brief explanation (1 sentence) for the score
 
 Guidelines:
 - Do not be biased by the number of citations
 - Newer papers (2024+) are slightly preferred over older papers (2023 or earlier)
-- Score 0: Not future work suggestions at all
+- Score 0: Not a future work suggestion at all
 - Score 1-2: Very vague or irrelevant
 - Score 3-4: Overly general statements about future work
 - Score 5-7: Moderately relevant and specific but difficult to build on
@@ -407,9 +406,9 @@ Guidelines:
 Example output format:
 ```json
 [
-  {{"paper_index": 4, "score": 9, "reason": "Highly relevant with sufficient technical description."}},
-  {{"paper_index": 1, "score": 3, "reason": "Too vague, lacks specific directions."}}
-  {{"paper_index": 10, "score": 0, "reason": "Not a future work suggestion."}}
+  {{"snippet_id": 4, "score": 9, "reason": "Highly relevant with sufficient technical description."}},
+  {{"snippet_id": 1, "score": 3, "reason": "Too vague, lacks specific directions."}},
+  {{"snippet_id": 10, "score": 0, "reason": "Not a future work suggestion."}}
 ]
 ```"""
 
@@ -421,12 +420,9 @@ Example output format:
             )
             # Parse the JSON response
             batch_rankings = extract_json_from_response(response.content)
-            # adjust the paper indices to be global (relative to the full papers_for_ranking list), not just the current batch.
-            for ranking in batch_rankings:
-                ranking["paper_index"] = batch_start + ranking["paper_index"]
 
             if batch_rankings and isinstance(batch_rankings, list):
-                all_rankings.extend(batch_rankings)
+                all_snippet_rankings.extend(batch_rankings)
             else:
                 logger.warning(f"Invalid JSON response from batch {batch_start//batch_size + 1}")
 
@@ -437,34 +433,80 @@ Example output format:
             logger.warning(f"Error ranking batch {batch_start//batch_size + 1}: {e}. " f"Skipping batch.")
             continue
 
-    if not all_rankings:
-        logger.warning("No successful rankings. Falling back to citation-based ranking.")
+    if not all_snippet_rankings:
+        logger.warning("No successful snippet rankings. Falling back to citation-based ranking.")
         return sorted(papers_with_snippets, key=lambda x: x["origin_paper"]["citationCount"], reverse=True)
 
-    # TODO: hardcode warning for now
-    high_quality_rankings = [r for r in all_rankings if r.get("score", 0) >= 5]
-    high_quality_rankings.sort(key=lambda x: x["score"], reverse=True)
+    # Filter high-quality snippets and map back to original snippets
+    high_quality_snippet_rankings = [r for r in all_snippet_rankings if r.get("score", 0) >= 5]
+    high_quality_snippet_rankings.sort(key=lambda x: x["score"], reverse=True)
 
-    total_snippets = len(high_quality_rankings)
+    # Create a mapping from global_snippet_id to ranking
+    snippet_ranking_map = {r["snippet_id"]: r for r in high_quality_snippet_rankings}
 
-    logger.info(f"LLM ranked {total_snippets} papers across {len(all_rankings)} high-quality papers")
+    # Group high-quality snippets back by paper
+    papers_with_ranked_snippets = {}
     
-    # Map rankings back to original papers_with_snippets format
-    ranked_papers = []
-    for ranking in high_quality_rankings:
-        paper_idx = ranking["paper_index"] - 1  # Convert from 1-based to 0-based indexing
-        if 0 <= paper_idx < len(papers_with_snippets):
-            original_paper_data = papers_with_snippets[paper_idx]
-            # Add the ranking score to the paper data
-            paper_with_score = {
-                "origin_paper": original_paper_data["origin_paper"].copy(),
-                "unique_snippets": original_paper_data["unique_snippets"].copy(),
-                "llm_ranking_score": ranking["score"],
-                "llm_ranking_reason": ranking["reason"]
+    for snippet_data in individual_snippets:
+        global_id = snippet_data["global_snippet_id"]
+        if global_id in snippet_ranking_map:
+            paper_idx = snippet_data["paper_index"]
+            
+            if paper_idx not in papers_with_ranked_snippets:
+                papers_with_ranked_snippets[paper_idx] = {
+                    "origin_paper": papers_with_snippets[paper_idx]["origin_paper"].copy(),
+                    "unique_snippets": [],
+                    "snippet_scores": []
+                }
+            
+            # Add the snippet with its ranking and original data
+            original_snippet = papers_with_snippets[paper_idx]["unique_snippets"][snippet_data["snippet_index"]]
+            ranked_snippet = {
+                "snippet": snippet_data["snippet_text"],
+                "search_term": snippet_data["search_term"],
+                "char_start_offset": original_snippet.get("char_start_offset", 0),
+                "llm_score": snippet_ranking_map[global_id]["score"],
+                "llm_reason": snippet_ranking_map[global_id]["reason"]
             }
-            ranked_papers.append(paper_with_score)
+            
+            papers_with_ranked_snippets[paper_idx]["unique_snippets"].append(ranked_snippet)
+            papers_with_ranked_snippets[paper_idx]["snippet_scores"].append(snippet_ranking_map[global_id]["score"])
+
+    # Sort snippets within each paper and calculate paper-level scores
+    final_ranked_papers = []
+    for paper_idx, paper_data in papers_with_ranked_snippets.items():
+        # Sort snippets by score (highest first)
+        snippet_score_pairs = list(zip(paper_data["unique_snippets"], paper_data["snippet_scores"]))
+        snippet_score_pairs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Keep only top snippets per paper (max 6)
+        max_snippets_per_paper = 6
+        top_snippets = [snippet for snippet, _ in snippet_score_pairs[:max_snippets_per_paper]]
+        top_scores = [score for _, score in snippet_score_pairs[:max_snippets_per_paper]]
+        
+        # Sort the selected top snippets by char_start_offset for document order
+        top_snippets.sort(key=lambda x: x.get("char_start_offset", 0))
+        
+        # Calculate paper-level score as average of top snippet scores
+        paper_score = sum(top_scores) / len(top_scores) if top_scores else 0
+        
+        final_paper = {
+            "origin_paper": paper_data["origin_paper"],
+            "unique_snippets": top_snippets,
+            "llm_ranking_score": paper_score,
+            "num_high_quality_snippets": len(top_snippets)
+        }
+        final_ranked_papers.append(final_paper)
+
+    # Sort papers by their calculated scores
+    final_ranked_papers.sort(key=lambda x: x["llm_ranking_score"], reverse=True)
+
+    total_papers = len(final_ranked_papers)
+    total_snippets = sum(len(p["unique_snippets"]) for p in final_ranked_papers)
+
+    logger.info(f"LLM ranked {total_snippets} high-quality snippets across {total_papers} papers")
     
-    return ranked_papers
+    return final_ranked_papers
 
 
 def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
@@ -506,6 +548,7 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
                                 "search_term": search_term,
                                 "matched_corpus_id": matched_corpus_id,
                                 "snippet_section": item.get("snippet", {}).get("section", ""),
+                                "char_start_offset": item.get("snippet", {}).get("offset", {}).get("start", 0),
                             }
                             all_snippets.append(snippet_data)
 
@@ -553,6 +596,7 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
                 snippet_dict = {
                     "snippet": snippet_data["snippet"],
                     "search_term": snippet_data["search_term"],
+                    "char_start_offset": snippet_data.get("char_start_offset", 0),
                 }
                 papers_with_snippets[corpus_id]["unique_snippets"].append(snippet_dict)
 
