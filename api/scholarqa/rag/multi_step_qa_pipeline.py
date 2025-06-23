@@ -8,14 +8,14 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 import pandas as pd
 from pydantic import BaseModel, Field
 from scholarqa.llms.constants import GPT_41
-from scholarqa.llms.litellm_helper import (add_gemini_thinking_if_needed,
-                                           batch_llm_completion,
-                                           llm_completion)
-from scholarqa.llms.prompts import (PROMPT_ASSEMBLE_NO_QUOTES_SUMMARY,
-                                    USER_PROMPT_PAPER_LIST_FORMAT,
-                                    USER_PROMPT_QUOTE_LIST_FORMAT)
-
-from scholarqa.utils import CompletionResult, extract_json_from_response
+from scholarqa.llms.litellm_helper import add_gemini_thinking_if_needed, batch_llm_completion, llm_completion
+from scholarqa.llms.prompts import (
+    PROMPT_ASSEMBLE_NO_QUOTES_SUMMARY,
+    USER_PROMPT_PAPER_LIST_FORMAT,
+    USER_PROMPT_QUOTE_LIST_FORMAT,
+)
+from scholarqa.models import IdeationEvaluationResponse
+from scholarqa.utils import CompletionResult
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +247,7 @@ class MultiStepQAPipeline:
             yield response
 
     def generate_future_ideas_iterative(
-        self, snippets_text: str, ideation_query: str, ideation_instructions: str, num_ideas: int = 6
+        self, sections_str: str, snippets_text: str, ideation_query: str, ideation_instructions: str, num_ideas: int = 6
     ) -> Generator[CompletionResult, None, None]:
         """Generate future research ideas one at a time"""
 
@@ -269,14 +269,17 @@ class MultiStepQAPipeline:
             "{ideation_query}"
 
 Plan:
-First, I will provide you with a list of research papers and some future work snippets from these papers so you understand the latest research around this topic.
-Then, I will provide you with some previously generated ideas. You should not generate ideas that are similar to the previously generated ideas.
+First, I will provide you with some previously generated ideas. You should not generate ideas that are similar to the previously generated ideas.
+Then, I will provide you with a list of research papers and some future work snippets from these papers so you understand the latest research around this topic.
 Then, I will provide you with additional detailed instructions.
 
 Already generated ideas:
 {already_generated_text}
 
-Recent Research Papers with Future Work Snippets from these papers:
+Research Context providing the latest state of the art about this topic:
+{sections_str}
+
+Some Related Research Papers with Optional Future Work Snippets from these papers:
 {snippets_text}
 
 ---
@@ -317,10 +320,11 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
             # Combine idea with evaluation
             idea_with_evaluation = f"{response.content}\n\n### Idea Evaluation\n{evaluation.content}"
 
-            # Add the revised idea to existing ideas for context
-            if evaluation_json and evaluation_json.get('revised_research_idea'):
-                existing_ideas.append(evaluation_json['revised_research_idea'])
+            if evaluation_json and evaluation_json.get("revised_research_idea_detailed_description"):
+                idea_text = f"Idea Title: {evaluation_json['revised_research_idea_title']}\n\nIdeaDescription:{evaluation_json['revised_research_idea_detailed_description']}"
+                existing_ideas.append(idea_text)
             else:
+                logger.warning(f"No revised research idea found in the evaluation response. Likely the json is not valid.")
                 existing_ideas.append(idea_with_evaluation)
 
             # Create a new response object with the combined content
@@ -335,7 +339,9 @@ Focus on being specific about methodologies, datasets, evaluation metrics, and e
 
             yield combined_response
 
-    def evaluate_research_idea(self, idea_text: str, ideation_query: str, context_snippets: str) -> Tuple[CompletionResult, Dict]:
+    def evaluate_research_idea(
+        self, idea_text: str, ideation_query: str, context_snippets: str
+    ) -> Tuple[CompletionResult, Dict]:
         """Evaluate the quality and feasibility of a generated research idea"""
 
         evaluation_prompt = f"""You are an expert research scientist tasked with evaluating the quality of a proposed research direction. You are very critical, careful, and thorough. You do not like vague and high-level ideas and what people propose should be concretely described and not something already similar to what is out there.
@@ -405,13 +411,17 @@ Provide your final revised research idea in the following json format:
         llm_kwargs = add_gemini_thinking_if_needed(self.summary_generation_llm, self.llm_kwargs)
 
         evaluation_response = llm_completion(
-            user_prompt=evaluation_prompt, model=self.summary_generation_llm, fallback=self.fallback_llm, **llm_kwargs
+            user_prompt=evaluation_prompt,
+            model=self.summary_generation_llm,
+            fallback=self.fallback_llm,
+            response_format=IdeationEvaluationResponse,
+            **llm_kwargs,
         )
-        
-        # Extract JSON from the response content
-        json_response = extract_json_from_response(evaluation_response.content)
-        
+
+        json_response = evaluation_response.content
+
         # Format the JSON response as markdown
+        import ipdb; ipdb.set_trace()
         if json_response and isinstance(json_response, dict):
             converted_json_to_markdown = f"""**Evaluation Results:**
 
@@ -435,7 +445,7 @@ Provide your final revised research idea in the following json format:
             # Fallback if JSON extraction failed
             converted_json_to_markdown = evaluation_response.content
             json_response = {}
-        
+
         # Create a new CompletionResult with formatted content
         formatted_evaluation_response = CompletionResult(
             content=converted_json_to_markdown,
@@ -445,5 +455,5 @@ Provide your final revised research idea in the following json format:
             output_tokens=evaluation_response.output_tokens,
             total_tokens=evaluation_response.total_tokens,
         )
-        
+
         return formatted_evaluation_response, json_response

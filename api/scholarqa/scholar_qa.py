@@ -741,7 +741,7 @@ class ScholarQA:
         # Generate future ideas section
         try:
             future_ideas_section = self.generate_future_ideas_section(
-                json_summary, query, event_trace, paper_metadata, ideation_query, ideation_instructions
+                generated_sections, json_summary, query, event_trace, paper_metadata, ideation_query, ideation_instructions
             )
             if future_ideas_section:
                 generated_sections.append(future_ideas_section)
@@ -758,6 +758,7 @@ class ScholarQA:
 
     def generate_future_ideas_section(
         self,
+        generated_sections: List[GeneratedSection],
         json_summary: List[Dict],
         query: str,
         event_trace,
@@ -782,15 +783,20 @@ class ScholarQA:
                     if corpus_id:
                         corpus_ids.add(str(corpus_id))
 
+        sections_str = "\n---\n".join([section.to_string(i) for i, section in enumerate(generated_sections)])
+
         if not corpus_ids:
             logger.warning("No corpus IDs found for future ideas search")
             return None
 
         # Search for "future work" snippets in these papers
         future_snippets = search_future_work_snippets(list(corpus_ids), paper_metadata)
+        logger.info(f"Found {len(future_snippets)} future work snippets from {len(corpus_ids)} papers")
 
         # Rank and filter snippets using LLM for relevance and quality
-        if future_snippets:
+        # TODO: remove this hardcode
+        if future_snippets and len(future_snippets) > 5:
+            logger.info(f"Ranking {len(future_snippets)} future work snippets")
             future_snippets = rank_future_snippets_with_llm(
                 future_snippets, 
                 ideation_query, 
@@ -801,13 +807,13 @@ class ScholarQA:
 
         if not future_snippets:
             logger.info("No future work snippets found")
-            return None
+            future_snippets = []
 
         self.update_task_state("Generating concrete future ideas iteratively", step_estimated_time=60)
 
         # Generate future ideas iteratively
         future_ideas_generator = self._generate_future_ideas_iterative(
-            future_snippets, ideation_query, ideation_instructions, event_trace, num_ideas=6
+            sections_str, future_snippets, ideation_query, ideation_instructions, event_trace, num_ideas=6
         )
 
         all_ideas = []
@@ -843,16 +849,16 @@ class ScholarQA:
 
 
     def _generate_future_ideas_iterative(
-        self, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace, num_ideas: int = 6
+        self, sections_str: str, snippets: List[Dict], ideation_query: str, ideation_instructions: str, event_trace, num_ideas: int = 6
     ) -> Generator[str, None, CostAwareLLMResult]:
         """Generate future ideas iteratively, one at a time"""
 
         # Prepare snippets text with paper information
         snippets_text = ""
         for i, snippet_data in enumerate(snippets, 1):
-            paper = snippet_data["paper"]
-            snippet = snippet_data["snippet"]
-            snippet = snippet.replace("\n\n", "...").replace("\n", " ")
+            paper = snippet_data["origin_paper"]
+            snippet = " ... ".join([s["snippet"] for s in snippet_data["unique_snippets"]])
+            snippet = snippet.replace("\n\n", " ... ").replace("\n", " ")
 
             # Format authors
             authors_str = ""
@@ -890,6 +896,7 @@ class ScholarQA:
         idea_generator = self.llm_caller.call_iter_method(
             cost_args,
             self.multi_step_pipeline.generate_future_ideas_iterative,
+            sections_str=sections_str,
             snippets_text=snippets_text,
             ideation_query=ideation_query,
             ideation_instructions=ideation_instructions,

@@ -1,5 +1,5 @@
-import logging
 import json
+import logging
 import os
 import re
 import sys
@@ -36,6 +36,8 @@ CATEGORICAL_META_FIELDS = {
     "influentialCitationCount",
 }
 METADATA_FIELDS = ",".join(CATEGORICAL_META_FIELDS.union(NUMERIC_META_FIELDS))
+
+
 
 
 # Custom exception for API errors
@@ -305,75 +307,99 @@ def format_citation(paper: Dict[str, Any]) -> str:
 
 
 def rank_future_snippets_with_llm(
-    snippets: List[Dict], ideation_query: str, ranking_llm: str, fallback_llm: str, update_task_state_callback=None
-) -> List[Dict]:
+    papers_with_snippets: List[Dict[str, Any]],
+    ideation_query: str,
+    ranking_llm: str,
+    fallback_llm: str,
+    update_task_state_callback=None,
+) -> List[Dict[str, Any]]:
     """Rank and filter future work snippets using LLM for relevance and quality
 
-    Processes all snippets in batches of 20 to handle large numbers efficiently.
+    Args:
+        papers_with_snippets: List of dicts with 'origin_paper' and 'unique_snippets' keys
+        ideation_query: The research query for relevance evaluation
+        ranking_llm: Primary LLM model for ranking
+        fallback_llm: Fallback LLM model
+        update_task_state_callback: Optional callback for progress updates
+
+    Returns:
+        List of papers with ranked snippets in the same format as input
     """
 
-    if not snippets:
-        return snippets
+    if not papers_with_snippets:
+        return papers_with_snippets
+
+    # Create papers list with concatenated snippets
+    papers_for_ranking = []
+    for paper_data in papers_with_snippets:
+        # Concatenate all snippets from this paper with "..." separator
+        concatenated_snippets = "...".join(snippet["snippet"] for snippet in paper_data["unique_snippets"])
+
+        paper_for_ranking = {
+            "concatenated_snippets": concatenated_snippets,
+            "paper": paper_data["origin_paper"],
+            "original_snippets": paper_data["unique_snippets"],
+        }
+        papers_for_ranking.append(paper_for_ranking)
 
     if update_task_state_callback:
         update_task_state_callback(
-            "Ranking future work snippets for quality and relevance",
-            step_estimated_time=len(snippets) // 4,  # Roughly 4 snippets per second
+            "Ranking future work papers for quality and relevance",
+            step_estimated_time=len(papers_for_ranking) // 4,
         )
 
     batch_size = 10
     all_rankings = []
 
-    # Process snippets in batches
-    for batch_start in range(0, len(snippets), batch_size):
-        batch_end = min(batch_start + batch_size, len(snippets))
-        batch_snippets = snippets[batch_start:batch_end]
+    # Process papers in batches
+    for batch_start in range(0, len(papers_for_ranking), batch_size):
+        batch_end = min(batch_start + batch_size, len(papers_for_ranking))
+        batch_papers = papers_for_ranking[batch_start:batch_end]
 
         # Create prompt for this batch
-        snippets_text = ""
-        for i, snippet_data in enumerate(batch_snippets):
-            global_idx = batch_start + i + 1  # Global index across all snippets
-            current_snippet_txt = snippet_data['snippet'].replace('\n', ' ')
-            snippets_text += (
-                f"Snipet Index: [{global_idx}]\n"
-                f"Paper title: {snippet_data['paper']['title']}\n"
-                f"Year: ({snippet_data['paper']['year']})\n"
-                f"Citations: {snippet_data['paper']['citationCount']}\n"
-                f"Future Work Snippet: {current_snippet_txt}\n\n---\n\n"
+        papers_text = ""
+        for i, paper_data in enumerate(batch_papers):
+            local_idx = batch_start + i + 1  # Global index across all papers
+            concatenated_txt = paper_data["concatenated_snippets"].replace("\n", " ")
+            papers_text += (
+                f"Paper Index: [{local_idx}]\n"
+                f"Paper title: {paper_data['paper']['title']}\n"
+                f"Year: ({paper_data['paper']['year']})\n"
+                f"Citations: {paper_data['paper']['citationCount']}\n"
+                f"Future Work Snippets: {concatenated_txt}\n\n---\n\n"
             )
 
-        ranking_prompt = f"""You are tasked with ranking future work snippets based on their relevance to the research query and quality as actionable future research directions.
+        ranking_prompt = f"""You are tasked with ranking papers based on their future work suggestions' relevance to the research query and quality as actionable future research directions.
 
-Research Query: "{ideation_query}"
+Research Query: 
+"{ideation_query}"
 
-Below are {len(batch_snippets)} future work snippets from academic papers (batch {batch_start//batch_size + 1}):
+Below are {len(batch_papers)} papers with their future work snippets (batch {batch_start//batch_size + 1}):
 
-{snippets_text}
+{papers_text}
 
-Please evaluate each snippet and provide scores. Focus on the snippet itself and not the paper. Consider:
+Please evaluate each paper's future work suggestions and provide scores. Focus on the future work snippets and not the paper's abstract or metadata. Consider:
 
-1. **Relevance**: Is this actually a future work suggestion? How closely related is it to the research query?
-2. **Specificity**: Does it suggest concrete, actionable research directions (not vague "more research needed")?
-3. **Innovation Potential**: Does it identify gaps/limitations that could lead to novel research?
-4. **Technical Depth**: Does it provide enough technical detail to inspire concrete research ideas or it is vague?
+1. **Relevance**: Are these snippets actually future work suggestions? How closely related are they to the research query?
+2. **Specificity**: Do they suggest concrete, actionable research directions (not vague "more research needed")?
+3. **Innovation Potential**: Do they identify gaps/limitations that could lead to novel research?
+4. **Technical Depth**: Do they provide enough technical detail to inspire concrete research ideas or are they vague?
 
-Again, you should evaluate the snippet itself and not the paper it comes from. We only have the snippet text and not the paper.
-
-Return ONLY a JSON array with evaluations for ALL snippets in this batch.
-Do not be too much biased by length of the snippet or the number of citations.
+Return ONLY a JSON array with evaluations for ALL papers in this batch.
+Do not be too much biased by the number of citations.
 Do not include any explanatory text before or after the JSON.
 
-Required format for each snippet:
-- "snippet_index": the index from the list above ({batch_start + 1}-{batch_end})
+Required format for each paper:
+- "paper_index": the index from the list above
 - "score": score from 0-10 for overall quality and relevance
 - "reason": brief explanation (1 sentence) for the score
 
 Guidelines:
-- Do not be biased by length of the snippet or the number of citations
+- Do not be biased by the number of citations
 - Newer papers (2024+) are slightly preferred over older papers (2023 or earlier)
-- Score 0: Not a future work suggestion at all
+- Score 0: Not future work suggestions at all
 - Score 1-2: Very vague or irrelevant
-- Score 3-4: Overly general statement about future work.
+- Score 3-4: Overly general statements about future work
 - Score 5-7: Moderately relevant and specific but difficult to build on
 - Score 8-9: Highly relevant with good technical detail
 - Score 10: Exceptional relevance and specificity
@@ -381,9 +407,9 @@ Guidelines:
 Example output format:
 ```json
 [
-  {{"snippet_index": {batch_start + 4}, "score": 9, "reason": "Highly relevant with sufficient technical description."}},
-  {{"snippet_index": {batch_start + 2}, "score": 3, "reason": "Too vague, lacks specific directions."}},
-  {{"snippet_index": {batch_start + 6}, "score": 0, "reason": "Not a future work suggestion."}}
+  {{"paper_index": 4, "score": 9, "reason": "Highly relevant with sufficient technical description."}},
+  {{"paper_index": 1, "score": 3, "reason": "Too vague, lacks specific directions."}}
+  {{"paper_index": 10, "score": 0, "reason": "Not a future work suggestion."}}
 ]
 ```"""
 
@@ -393,9 +419,12 @@ Example output format:
             response = llm_completion(
                 user_prompt=ranking_prompt, model=ranking_llm, fallback=fallback_llm, max_tokens=4096, temperature=0.1
             )
-            import ipdb; ipdb.set_trace()
             # Parse the JSON response
             batch_rankings = extract_json_from_response(response.content)
+            # adjust the paper indices to be global (relative to the full papers_for_ranking list), not just the current batch.
+            for ranking in batch_rankings:
+                ranking["paper_index"] = batch_start + ranking["paper_index"]
+
             if batch_rankings and isinstance(batch_rankings, list):
                 all_rankings.extend(batch_rankings)
             else:
@@ -410,26 +439,35 @@ Example output format:
 
     if not all_rankings:
         logger.warning("No successful rankings. Falling back to citation-based ranking.")
-        return sorted(snippets, key=lambda x: x["paper"]["citationCount"], reverse=True)
+        return sorted(papers_with_snippets, key=lambda x: x["origin_paper"]["citationCount"], reverse=True)
 
     # TODO: hardcode warning for now
     high_quality_rankings = [r for r in all_rankings if r.get("score", 0) >= 5]
     high_quality_rankings.sort(key=lambda x: x["score"], reverse=True)
 
-    # Build final ranked snippets list
-    ranked_snippets = []
+    total_snippets = len(high_quality_rankings)
+
+    logger.info(f"LLM ranked {total_snippets} papers across {len(all_rankings)} high-quality papers")
+    
+    # Map rankings back to original papers_with_snippets format
+    ranked_papers = []
     for ranking in high_quality_rankings:
-        snippet_idx = ranking["snippet_index"] - 1  # Convert to 0-based
-        if 0 <= snippet_idx < len(snippets):
-            snippet = snippets[snippet_idx].copy()
-            snippet["quality_score"] = ranking["score"]
-            snippet["ranking_reason"] = ranking["reason"]
-            ranked_snippets.append(snippet)
-    logger.info(f"LLM ranked {len(ranked_snippets)}/{len(snippets)} high-quality snippets")
-    return ranked_snippets
+        paper_idx = ranking["paper_index"] - 1  # Convert from 1-based to 0-based indexing
+        if 0 <= paper_idx < len(papers_with_snippets):
+            original_paper_data = papers_with_snippets[paper_idx]
+            # Add the ranking score to the paper data
+            paper_with_score = {
+                "origin_paper": original_paper_data["origin_paper"].copy(),
+                "unique_snippets": original_paper_data["unique_snippets"].copy(),
+                "llm_ranking_score": ranking["score"],
+                "llm_ranking_reason": ranking["reason"]
+            }
+            ranked_papers.append(paper_with_score)
+    
+    return ranked_papers
 
 
-def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str, Any] = None) -> List[Dict]:
+def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """Search for future work snippets using Semantic Scholar snippet search API
 
     Args:
@@ -480,8 +518,8 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
         matched_corpus_ids = {snippet["matched_corpus_id"] for snippet in all_snippets}
         paper_metadata = get_paper_metadata(matched_corpus_ids) if matched_corpus_ids else {}
 
-    # Remove duplicates based on snippet text and associate with paper metadata
-    unique_snippets = []
+    # Group snippets by paper and remove duplicates
+    papers_with_snippets = {}
     seen_snippets = set()
 
     for snippet_data in all_snippets:
@@ -496,41 +534,46 @@ def search_future_work_snippets(corpus_ids: List[str], paper_metadata: Dict[str,
             # Only include papers with at least 1 citations
             citation_count = paper_info.get("citationCount", 0)
             if citation_count >= 1:  # TODO: hardcode warning for now
-                snippet_with_paper = {
+                # Create paper dict if not exists
+                if corpus_id not in papers_with_snippets:
+                    papers_with_snippets[corpus_id] = {
+                        "origin_paper": {
+                            "title": paper_info.get("title", "Unknown Title"),
+                            "abstract": paper_info.get("abstract", ""),
+                            "corpus_id": corpus_id,
+                            "authors": paper_info.get("authors", []),
+                            "year": paper_info.get("year", ""),
+                            "venue": paper_info.get("venue", ""),
+                            "citationCount": citation_count,
+                        },
+                        "unique_snippets": [],
+                    }
+
+                # Add snippet to this paper's list
+                snippet_dict = {
                     "snippet": snippet_data["snippet"],
                     "search_term": snippet_data["search_term"],
-                    "paper": {
-                        "title": paper_info.get("title", "Unknown Title"),
-                        "abstract": paper_info.get("abstract", ""),
-                        "corpus_id": corpus_id,
-                        "authors": paper_info.get("authors", []),
-                        "year": paper_info.get("year", ""),
-                        "venue": paper_info.get("venue", ""),
-                        "citationCount": citation_count,
-                    },
                 }
-                unique_snippets.append(snippet_with_paper)
+                papers_with_snippets[corpus_id]["unique_snippets"].append(snippet_dict)
 
-    # Sort by citation count in descending order (highest citations first)
-    unique_snippets.sort(key=lambda x: x["paper"]["citationCount"], reverse=True)
+    # Convert to list and sort by citation count in descending order
+    result = list(papers_with_snippets.values())
+    result.sort(key=lambda x: x["origin_paper"]["citationCount"], reverse=True)
 
-    # # Limit to 20 snippets
-    # unique_snippets = unique_snippets[:20]
-
-    return unique_snippets
+    return result
 
 
 def extract_json_from_response(content: str) -> Union[List[Dict], Dict[str, Any], None]:
     """Extract JSON from LLM response, handling both plain JSON and markdown code blocks"""
-    
+
     if not content:
         return None
-    
+
     try:
         # First, try to find JSON within markdown code blocks
-        json_pattern = r'```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```'
+        json_pattern = r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```"
         json_matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
-        
+
         if json_matches:
             # Try to parse the first JSON match
             for match in json_matches:
@@ -538,12 +581,12 @@ def extract_json_from_response(content: str) -> Union[List[Dict], Dict[str, Any]
                     return json.loads(match.strip())
                 except json.JSONDecodeError:
                     continue
-        
+
         # If no markdown blocks found, try to find raw JSON
         # Look for array or object patterns
-        array_pattern = r'\[.*?\]'
-        object_pattern = r'\{.*?\}'
-        
+        array_pattern = r"\[.*?\]"
+        object_pattern = r"\{.*?\}"
+
         # Try array first (our expected format)
         array_matches = re.findall(array_pattern, content, re.DOTALL)
         for match in array_matches:
@@ -553,7 +596,7 @@ def extract_json_from_response(content: str) -> Union[List[Dict], Dict[str, Any]
                     return parsed
             except json.JSONDecodeError:
                 continue
-        
+
         # Try object
         object_matches = re.findall(object_pattern, content, re.DOTALL)
         for match in object_matches:
@@ -563,10 +606,10 @@ def extract_json_from_response(content: str) -> Union[List[Dict], Dict[str, Any]
                     return parsed
             except json.JSONDecodeError:
                 continue
-        
+
         # Last resort: try to parse the entire content
         return json.loads(content.strip())
-        
+
     except Exception as e:
         logger.warning(f"Failed to extract JSON from response: {e}")
         logger.debug(f"Response content: {content[:500]}...")
